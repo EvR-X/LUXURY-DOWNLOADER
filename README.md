@@ -651,6 +651,3 @@ AUR operations require an Arch-based system, a network connection, and a normal 
 Source builds such as `lavat` and Peaclock require network access to their upstream repositories and the appropriate build environment.
 
 ---
-
-# 📜 License
-[XXXX]
