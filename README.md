@@ -636,7 +636,7 @@ Luxury Downloader is designed around a few simple principles:
 
 # 📌 Current Version
 
-**Luxury Downloader v2.1.4**
+**Luxury Downloader v2.1.9**
 
 ---
 
