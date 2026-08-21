@@ -74,10 +74,6 @@ The option numbers are generated automatically from the application's registry, 
 - **LibreOffice**
 - **MPV**
 
-### Important
-
-`btop` is **not** in the main menu. It belongs exclusively to **Terminal Utilities** so it is not duplicated.
-
 ---
 
 # 📦 Supported Applications
@@ -504,7 +500,7 @@ AUR helpers are built as the normal user. Luxury explicitly refuses to build AUR
 
 ---
 
-# 💾 Permanent Installation
+# 💾 Installation
 
 Install the `luxury` command system-wide with:
 
@@ -526,17 +522,6 @@ luxury
 
 ---
 
-# ⚡ Temporary One-Time Use
-
-Luxury can also be used once without installing the `luxury` command:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
-```
-
-This downloads and executes the script directly. It does not install `/usr/local/bin/luxury` unless the user explicitly chooses the install action from the script.
-
----
 
 # 🔧 Luxury Commands
 
@@ -547,14 +532,6 @@ luxury
 ```
 
 Opens the interactive menu.
-
-## Install Luxury
-
-```bash
-luxury install
-```
-
-Installs the current script as `/usr/local/bin/luxury`.
 
 ## Force an Update
 
@@ -609,24 +586,11 @@ luxury -h
 | Command | What it does |
 |---|---|
 | `luxury` | Opens the interactive menu |
-| `luxury install` | Installs Luxury system-wide |
 | `luxury update` | Force-updates the installed Luxury command |
 | `luxury uninstall` | Removes the installed Luxury command |
 | `luxury remove` | Alias for `luxury uninstall` |
 | `luxury --version` | Shows the current Luxury version |
 | `luxury --help` | Shows command help |
-
-### One-time temporary use
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/luxury-downloader.sh | bash
-```
-
-### One-line permanent installation
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/luxury-downloader.sh | bash -s -- install
-```
 
 ---
 
@@ -679,7 +643,7 @@ Luxury Downloader is designed around a few simple principles:
 
 # 📌 Current Version
 
-**Luxury Downloader v2.1.2**
+**Luxury Downloader v2.1.4**
 
 ---
 
