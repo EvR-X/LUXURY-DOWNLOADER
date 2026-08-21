@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.1.8"
+VERSION="2.1.9"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -156,7 +156,8 @@ version_is_newer() {
     [[ "$candidate" =~ ^[0-9]+([.][0-9]+)*$ ]] || return 1
     [[ "$current" =~ ^[0-9]+([.][0-9]+)*$ ]] || return 1
 
-    [[ "$(printf '%s\n%s\n' "$current" "$candidate" | sort -V | tail -n1)" == "$candidate" ]]         && [[ "$candidate" != "$current" ]]
+    [[ "$(printf '%s\n%s\n' "$current" "$candidate" | sort -V | tail -n1)" == "$candidate" ]] \
+        && [[ "$candidate" != "$current" ]]
 }
 
 # ============================================================
@@ -369,7 +370,15 @@ download_remote_script() {
 
     require_command curl || return 1
 
-    if curl -fLsS --connect-timeout 5 --max-time 15 "$UPDATE_URL" -o "$destination"; then
+    # raw.githubusercontent.com sits behind a CDN that caches each exact
+    # URL for a few minutes. A unique query string on every call forces a
+    # cache miss so a version bump just pushed to the repo is picked up
+    # immediately instead of possibly serving a stale copy.
+    local cache_bust="$(date +%s)-$$-${RANDOM}"
+
+    if curl -fLsS --connect-timeout 5 --max-time 15 \
+        -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' \
+        "${UPDATE_URL}?cb=${cache_bust}" -o "$destination"; then
         return 0
     fi
 
@@ -478,6 +487,22 @@ uninstall_self() {
     esac
 }
 
+apply_update() {
+    local source="$1"
+    local version="$2"
+
+    check_sudo || return 1
+    require_command install || return 1
+
+    if $SUDO install -m 0755 "$source" "$INSTALL_PATH"; then
+        print_ok "Luxury Downloader updated to v${version}."
+        return 0
+    fi
+
+    print_err "Could not install the updated script."
+    return 1
+}
+
 update_self() {
     if [[ ! -f "$INSTALL_PATH" ]]; then
         print_warn "Luxury Downloader is not installed."
@@ -485,9 +510,7 @@ update_self() {
         return 1
     fi
 
-    check_sudo || return 1
     require_command curl || return 1
-    require_command install || return 1
 
     local temp
     temp="$(mktemp)"
@@ -528,15 +551,10 @@ update_self() {
         print_warn "The installed script has no readable VERSION. Replacing it with v${remote_version}."
     fi
 
-    if $SUDO install -m 0755 "$temp" "$INSTALL_PATH"; then
-        print_ok "Luxury Downloader updated to v${remote_version}."
-        rm -f "$temp"
-        return 0
-    fi
-
-    print_err "Could not install the updated script."
+    apply_update "$temp" "$remote_version"
+    local result=$?
     rm -f "$temp"
-    return 1
+    return "$result"
 }
 
 check_for_updates() {
@@ -554,22 +572,38 @@ check_for_updates() {
         installed_version="$VERSION"
     fi
 
+    print_info "Checking for Luxury Downloader updates..."
+
+    # Downloaded once here and reused below if the user picks [U], so the
+    # version we compare against is exactly the file we'd install — no
+    # second fetch that could land on a different CDN cache state.
+    local temp
+    temp="$(mktemp)"
+
+    if ! download_remote_script "$temp" 2>/dev/null; then
+        print_warn "Could not check for Luxury Downloader updates right now. Continuing."
+        rm -f "$temp"
+        return 0
+    fi
+
     local remote_version
-    remote_version="$(curl -fLsS --connect-timeout 5 --max-time 10 "$UPDATE_URL" 2>/dev/null \
-        | sed -n 's/^VERSION="\([^" ]*\)".*/\1/p' | head -n1)"
+    remote_version="$(extract_version_from_file "$temp")"
 
     if [[ -z "$remote_version" ]]; then
         print_warn "Could not check for Luxury Downloader updates right now. Continuing."
+        rm -f "$temp"
         return 0
     fi
 
     if [[ "$remote_version" == "$installed_version" ]]; then
         print_ok "Luxury Downloader is up to date (v${installed_version})."
+        rm -f "$temp"
         return 0
     fi
 
     if ! version_is_newer "$remote_version" "$installed_version"; then
         print_ok "Installed Luxury Downloader v${installed_version} is newer than the repository version v${remote_version}."
+        rm -f "$temp"
         return 0
     fi
 
@@ -584,18 +618,19 @@ check_for_updates() {
 
     case "${answer,,}" in
         u|update)
-            if update_self; then
+            if apply_update "$temp" "$remote_version"; then
+                rm -f "$temp"
                 print_info "Restarting Luxury Downloader..."
                 if [[ -x "$INSTALL_PATH" ]]; then
                     exec "$INSTALL_PATH"
                 fi
+            else
+                rm -f "$temp"
             fi
-            ;;
-        s|skip)
-            print_info "Update skipped."
             ;;
         *)
             print_info "Update skipped."
+            rm -f "$temp"
             ;;
     esac
 }
@@ -1348,8 +1383,8 @@ show_main_menu() {
     clear 2>/dev/null || true
     echo
 
-    printf '%b%s%b\n' "$BOLD$CYAN" "$LUXURY_TITLE" "$RESET"
-    printf 'v%s\n\n' "$VERSION"
+    print_box "$LUXURY_TITLE" "v${VERSION}"
+    echo
 
     printf '  %bSystem:%b       %s\n' "$BOLD" "$RESET" "$DISTRO_NAME"
     printf '  %bFamily:%b       %s\n' "$BOLD" "$RESET" "$DISTRO_FAMILY"
