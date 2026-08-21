@@ -498,7 +498,7 @@ AUR helpers are built as the normal user. Luxury explicitly refuses to build AUR
 Install the `luxury` command system-wide with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
 ```
 
 Luxury installs the command to:
