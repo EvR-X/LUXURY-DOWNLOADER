@@ -628,7 +628,6 @@ Luxury Downloader is designed around a few simple principles:
 - **No unnecessary root access** — request administrator privileges only when required.
 - **Safe Arch updates** — use `pacman -Syu` instead of a standalone package database sync.
 - **Automatic update awareness** — check for a newer Luxury version before the menu opens.
-- **Permanent or temporary use** — choose between a system command and one-time execution.
 - **Centralized application management** — keep installation definitions in registries.
 - **English interface** — all user-facing program text is written in English.
 
