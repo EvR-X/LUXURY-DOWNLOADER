@@ -1,9 +1,8 @@
-
 #!/usr/bin/env bash
 
 # ============================================================
 #                       LUXURY DOWNLOADER
-#        Lightweight CLI installer for Debian/Ubuntu + Arch
+#        
 # ============================================================
 
 # Public repository:
@@ -27,7 +26,7 @@
 
 set -u
 
-VERSION="2.1.6"
+VERSION="2.1.7"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -440,7 +439,8 @@ bootstrap_install() {
 
     if $SUDO install -m 0755 "$source" "$INSTALL_PATH"; then
         print_ok "Luxury Downloader v${candidate_version} installed."
-        print_info "Run: luxury"
+        printf '\n'
+        print_info "To start Luxury Downloader, type: luxury"
     else
         print_err "Could not install Luxury Downloader."
         [[ "$cleanup_temp" == true ]] && rm -f "$temp"
@@ -1485,7 +1485,7 @@ main() {
     # command (curl | bash). Once installed, plain `luxury` opens the UI.
     if [[ ! -f "$INSTALL_PATH" ]]; then
         bootstrap_install || return $?
-        exec "$INSTALL_PATH"
+        return 0
     fi
 
     require_command bash || return 1
