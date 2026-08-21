@@ -2,7 +2,7 @@
 
 # ============================================================
 #                       LUXURY DOWNLOADER
-#        
+#        Lightweight CLI installer for Debian/Ubuntu + Arch
 # ============================================================
 
 # Public repository:
@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.1.7"
+VERSION="2.1.8"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -547,28 +547,37 @@ check_for_updates() {
         return 0
     }
 
+    local installed_version
+    installed_version="$(extract_version_from_file "$INSTALL_PATH")"
+
+    if [[ -z "$installed_version" ]]; then
+        installed_version="$VERSION"
+    fi
+
     local remote_version
-    remote_version="$(curl -fLsS --connect-timeout 4 --max-time 8 "$UPDATE_URL" 2>/dev/null \
-        | sed -n 's/^VERSION="\([^"]*\)".*/\1/p' | head -n1)"
+    remote_version="$(curl -fLsS --connect-timeout 5 --max-time 10 "$UPDATE_URL" 2>/dev/null \
+        | sed -n 's/^VERSION="\([^" ]*\)".*/\1/p' | head -n1)"
 
     if [[ -z "$remote_version" ]]; then
-        print_warn "Could not check for updates right now. Continuing."
+        print_warn "Could not check for Luxury Downloader updates right now. Continuing."
         return 0
     fi
 
-    if [[ "$remote_version" == "$VERSION" ]]; then
-        print_ok "Luxury Downloader is up to date (v${VERSION})."
+    if [[ "$remote_version" == "$installed_version" ]]; then
+        print_ok "Luxury Downloader is up to date (v${installed_version})."
         return 0
     fi
 
-    if ! version_is_newer "$remote_version" "$VERSION"; then
-        print_ok "Local Luxury Downloader version is newer than the repository version (v${VERSION})."
+    if ! version_is_newer "$remote_version" "$installed_version"; then
+        print_ok "Installed Luxury Downloader v${installed_version} is newer than the repository version v${remote_version}."
         return 0
     fi
 
     printf '\n%bNew update found: v%s%b\n' "$YELLOW$BOLD" "$remote_version" "$RESET"
-    printf 'Current version: v%s\n' "$VERSION"
-    printf '[U] Update  [S] Skip: '
+    printf 'Current version: v%s\n\n' "$installed_version"
+    printf '[U] Update\n'
+    printf '[S] Skip\n\n'
+    printf 'Choose an option: '
 
     local answer
     read -r answer || answer=""
@@ -581,6 +590,9 @@ check_for_updates() {
                     exec "$INSTALL_PATH"
                 fi
             fi
+            ;;
+        s|skip)
+            print_info "Update skipped."
             ;;
         *)
             print_info "Update skipped."
@@ -1336,8 +1348,8 @@ show_main_menu() {
     clear 2>/dev/null || true
     echo
 
-    print_box "$LUXURY_TITLE" "v${VERSION}"
-    echo
+    printf '%b%s%b\n' "$BOLD$CYAN" "$LUXURY_TITLE" "$RESET"
+    printf 'v%s\n\n' "$VERSION"
 
     printf '  %bSystem:%b       %s\n' "$BOLD" "$RESET" "$DISTRO_NAME"
     printf '  %bFamily:%b       %s\n' "$BOLD" "$RESET" "$DISTRO_FAMILY"
@@ -1488,6 +1500,10 @@ main() {
         return 0
     fi
 
+    # Always check for a Luxury Downloader update first.
+    # Only after this check do we detect the system and open the menu.
+    check_for_updates
+
     require_command bash || return 1
     require_command uname || return 1
     require_command grep || return 1
@@ -1495,9 +1511,6 @@ main() {
 
     detect_distro || return 1
     check_architecture || return 1
-
-    # Check for a Luxury Downloader update before opening the main menu.
-    check_for_updates
 
     while true; do
         show_main_menu
