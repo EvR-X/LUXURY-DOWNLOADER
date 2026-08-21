@@ -509,7 +509,7 @@ AUR helpers are built as the normal user. Luxury explicitly refuses to build AUR
 Install the `luxury` command system-wide with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/luxury-downloader.sh | bash -s -- install
 ```
 
 Luxury installs the command to:
@@ -531,7 +531,7 @@ luxury
 Luxury can also be used once without installing the `luxury` command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
+curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/luxury-downloader.sh | bash
 ```
 
 This downloads and executes the script directly. It does not install `/usr/local/bin/luxury` unless the user explicitly chooses the install action from the script.
@@ -619,27 +619,14 @@ luxury -h
 ### One-time temporary use
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
+curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/luxury-downloader.sh | bash
 ```
 
 ### One-line permanent installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/luxury-downloader.sh | bash -s -- install
 ```
-
----
-
-# 🧪 Example First-Time Workflow
-
-A typical first setup can be:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash -s -- install
-luxury
-```
-
-From the interface you can then install the main applications, enter **Categories**, configure an AUR helper on Arch, choose drivers or firmware, install terminal utilities, install/launch Bazaar, or update the Linux system.
 
 ---
 
@@ -690,28 +677,6 @@ Luxury Downloader is designed around a few simple principles:
 
 ---
 
-# 📁 Repository
-
-GitHub repository:
-
-https://github.com/EvR-X/LUXURY-DOWNLOADER
-
-Luxury expects the main script in the repository root as:
-
-```text
-luxury-downloader.sh
-```
-
-Raw script URL:
-
-```text
-https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh
-```
-
-The updater downloads this script and reads its `VERSION` value to determine whether a newer Luxury release is available.
-
----
-
 # 📌 Current Version
 
 **Luxury Downloader v2.1.2**
@@ -731,5 +696,4 @@ Source builds such as `lavat` and Peaclock require network access to their upstr
 ---
 
 # 📜 License
-
-Add the project's license here when the repository license is finalized.
+[XXXX]
