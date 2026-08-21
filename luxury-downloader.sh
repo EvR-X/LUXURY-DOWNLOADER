@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 
 # ============================================================
@@ -8,17 +9,17 @@
 # Public repository:
 # https://github.com/EvR-X/LUXURY-DOWNLOADER
 #
-# Install:
-#   curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash -s -- install
+# Install (first-time setup):
+#   curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
 #
 # Then run:
 #   luxury
 #
+# Update Luxury itself:
+#   luxury update
+#
 # Uninstall:
 #   luxury uninstall
-#
-# Force update:
-#   luxury update
 #
 # NOTE:
 # The updater reads VERSION from the script hosted at UPDATE_URL.
@@ -26,7 +27,7 @@
 
 set -u
 
-VERSION="2.1.4"
+VERSION="2.1.6"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -306,20 +307,15 @@ install_pacman_package() {
     return 1
 }
 
-run_aur() {
-    local helper
-    helper="$(detect_aur_helper)" || {
-        print_err "No AUR helper is installed."
-        print_info "Open Categories -> AUR Helpers and install Yay or Paru first."
-        return 1
-    }
-
-    "$helper" "$@"
-}
-
 install_aur_package() {
     local package="$1"
     local name="${2:-$package}"
+
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        print_err "Do not build or install AUR packages as root."
+        print_info "Run Luxury as your normal user."
+        return 1
+    fi
 
     local helper
     helper="$(detect_aur_helper)" || {
@@ -387,7 +383,7 @@ extract_version_from_file() {
     sed -n 's/^VERSION="\([^"]*\)".*/\1/p' "$file" | head -n1
 }
 
-install_self() {
+bootstrap_install() {
     require_command install || return 1
     check_sudo || return 1
 
@@ -407,19 +403,43 @@ install_self() {
         source="$temp"
     fi
 
-    local remote_version
-    remote_version="$(extract_version_from_file "$source")"
+    local candidate_version
+    candidate_version="$(extract_version_from_file "$source")"
 
-    if [[ -z "$remote_version" ]]; then
-        print_err "The downloaded script does not contain a valid VERSION."
+    if [[ -z "$candidate_version" ]]; then
+        print_err "The source script does not contain a valid VERSION."
         [[ "$cleanup_temp" == true ]] && rm -f "$temp"
         return 1
     fi
 
-    print_info "Installing Luxury Downloader v${remote_version} to ${INSTALL_PATH}..."
+    if [[ -f "$INSTALL_PATH" ]]; then
+        local installed_version
+        installed_version="$(extract_version_from_file "$INSTALL_PATH")"
+
+        if [[ "$installed_version" == "$candidate_version" && -n "$installed_version" ]]; then
+            print_ok "Luxury Downloader v${installed_version} is already installed and up to date."
+            [[ "$cleanup_temp" == true ]] && rm -f "$temp"
+            return 0
+        fi
+
+        if [[ -n "$installed_version" ]] && ! version_is_newer "$candidate_version" "$installed_version"; then
+            print_warn "Installed Luxury Downloader v${installed_version} is newer than the source v${candidate_version}."
+            print_info "Nothing was changed."
+            [[ "$cleanup_temp" == true ]] && rm -f "$temp"
+            return 0
+        fi
+
+        if [[ -n "$installed_version" ]]; then
+            print_info "Updating installed Luxury Downloader from v${installed_version} to v${candidate_version}..."
+        else
+            print_info "Replacing the existing Luxury Downloader installation with v${candidate_version}..."
+        fi
+    else
+        print_info "Installing Luxury Downloader v${candidate_version} to ${INSTALL_PATH}..."
+    fi
 
     if $SUDO install -m 0755 "$source" "$INSTALL_PATH"; then
-        print_ok "Luxury Downloader installed."
+        print_ok "Luxury Downloader v${candidate_version} installed."
         print_info "Run: luxury"
     else
         print_err "Could not install Luxury Downloader."
@@ -428,6 +448,7 @@ install_self() {
     fi
 
     [[ "$cleanup_temp" == true ]] && rm -f "$temp"
+    return 0
 }
 
 uninstall_self() {
@@ -458,8 +479,13 @@ uninstall_self() {
 }
 
 update_self() {
-    check_sudo || return 1
+    if [[ ! -f "$INSTALL_PATH" ]]; then
+        print_warn "Luxury Downloader is not installed."
+        print_info "Install Luxury with the official one-line setup command from the README."
+        return 1
+    fi
 
+    check_sudo || return 1
     require_command curl || return 1
     require_command install || return 1
 
@@ -480,13 +506,27 @@ update_self() {
         return 1
     fi
 
-    if [[ "$remote_version" == "$VERSION" ]]; then
-        print_ok "Luxury Downloader is already up to date (v${VERSION})."
-        rm -f "$temp"
-        return 0
-    fi
+    local installed_version
+    installed_version="$(extract_version_from_file "$INSTALL_PATH")"
 
-    print_info "Updating from v${VERSION} to v${remote_version}..."
+    if [[ -n "$installed_version" ]]; then
+        if [[ "$remote_version" == "$installed_version" ]]; then
+            print_ok "Luxury Downloader is already up to date (v${installed_version})."
+            rm -f "$temp"
+            return 0
+        fi
+
+        if ! version_is_newer "$remote_version" "$installed_version"; then
+            print_warn "Repository version v${remote_version} is not newer than the installed v${installed_version}."
+            print_info "Downgrade skipped."
+            rm -f "$temp"
+            return 0
+        fi
+
+        print_info "Updating from v${installed_version} to v${remote_version}..."
+    else
+        print_warn "The installed script has no readable VERSION. Replacing it with v${remote_version}."
+    fi
 
     if $SUDO install -m 0755 "$temp" "$INSTALL_PATH"; then
         print_ok "Luxury Downloader updated to v${remote_version}."
@@ -500,6 +540,8 @@ update_self() {
 }
 
 check_for_updates() {
+    [[ -f "$INSTALL_PATH" ]] || return 0
+
     require_command curl >/dev/null 2>&1 || {
         print_warn "curl is not installed. Update check skipped."
         return 0
@@ -561,7 +603,7 @@ install_brave_origin_debian() {
     print_info "Installing Brave Origin using Brave's official installer..."
 
     # Official Brave Origin Linux installer.
-    if curl -fsS https://dl.brave.com/install.sh | FLAVOR=origin bash; then
+    if curl -fsS https://dl.brave.com/install.sh | FLAVOR=origin sh; then
         print_ok "Brave Origin installed."
         return 0
     fi
@@ -676,12 +718,18 @@ install_app_by_slug() {
 install_aur_helper() {
     local helper="$1"
 
-    check_sudo || return 1
-
     [[ "$DISTRO_FAMILY" == "arch" ]] || {
         print_warn "AUR helpers are available only on Arch-based systems."
         return 1
     }
+
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        print_err "Do not build AUR packages as root."
+        print_info "Run Luxury as your normal user."
+        return 1
+    fi
+
+    check_sudo || return 1
 
     if command -v "$helper" >/dev/null 2>&1; then
         print_ok "$helper is already installed."
@@ -719,13 +767,6 @@ install_aur_helper() {
             return 1
             ;;
     esac
-
-    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-        rm -rf "$tmpdir"
-        print_err "Do not build AUR packages as root."
-        print_info "Run Luxury as your normal user."
-        return 1
-    fi
 
     # makepkg should run as the invoking normal user, not root.
     chown -R "${SUDO_USER:-${USER}}" "$tmpdir" 2>/dev/null || true
@@ -788,18 +829,6 @@ show_aur_helpers_page() {
 #                       DRIVERS
 # ============================================================
 
-install_driver_arch() {
-    local label="$1"
-    shift
-    install_pacman_package "$1" "$label"
-    shift
-
-    local extra
-    for extra in "$@"; do
-        install_pacman_package "$extra" "$extra" || return 1
-    done
-}
-
 install_nvidia_arch() {
     install_pacman_package "nvidia-open" "NVIDIA Open Driver"
 }
@@ -813,6 +842,10 @@ install_amd_gpu_arch() {
 }
 
 install_amd_cpu_arch() {
+    if [[ "$(uname -m)" != "x86_64" ]]; then
+        print_warn "AMD CPU microcode package is only applicable to x86_64 systems."
+        return 0
+    fi
     install_pacman_package "amd-ucode" "AMD CPU Microcode"
 }
 
@@ -821,6 +854,10 @@ install_intel_gpu_arch() {
 }
 
 install_intel_cpu_arch() {
+    if [[ "$(uname -m)" != "x86_64" ]]; then
+        print_warn "Intel CPU microcode package is only applicable to x86_64 systems."
+        return 0
+    fi
     install_pacman_package "intel-ucode" "Intel CPU Microcode"
 }
 
@@ -859,6 +896,10 @@ install_amd_gpu_debian() {
 }
 
 install_amd_cpu_debian() {
+    if [[ "$(uname -m)" != "x86_64" ]]; then
+        print_warn "AMD CPU microcode package is only applicable to x86_64 systems."
+        return 0
+    fi
     install_apt_package "amd64-microcode" "AMD CPU Microcode"
 }
 
@@ -868,6 +909,10 @@ install_intel_gpu_debian() {
 }
 
 install_intel_cpu_debian() {
+    if [[ "$(uname -m)" != "x86_64" ]]; then
+        print_warn "Intel CPU microcode package is only applicable to x86_64 systems."
+        return 0
+    fi
     install_apt_package "intel-microcode" "Intel CPU Microcode"
 }
 
@@ -965,8 +1010,8 @@ install_peaclock_debian() {
 
     if ! (
         cd "$tmpdir/peaclock" &&
-        ./RUNME.sh build --release &&
-        ./RUNME.sh install --release
+        ./RUNME.sh build &&
+        ./RUNME.sh install
     ); then
         rm -rf "$tmpdir"
         print_err "Peaclock build/install failed."
@@ -1044,7 +1089,6 @@ declare -A UTIL_NAME=(
 declare -A UTIL_APT=(
     [cmatrix]="cmatrix"
     [cava]="cava"
-    [peaclock]="peaclock"
     [fastfetch]="fastfetch"
     [neofetch]="neowofetch"
     [hyfetch]="hyfetch"
@@ -1055,7 +1099,6 @@ declare -A UTIL_APT=(
 declare -A UTIL_PACMAN=(
     [cmatrix]="cmatrix"
     [cava]="cava"
-    [peaclock]="peaclock"
     [fastfetch]="fastfetch"
     [neofetch]="neofetch"
     [hyfetch]="hyfetch"
@@ -1065,7 +1108,7 @@ declare -A UTIL_PACMAN=(
 
 install_utility() {
     local slug="$1"
-    local name="${UTIL_NAME[$slug]}"
+    local name="${UTIL_NAME[$slug]:-$slug}"
 
     if [[ "$slug" == "lavat" ]]; then
         install_lavat
@@ -1089,9 +1132,7 @@ install_utility() {
         elif [[ "$slug" == "neofetch" ]]; then
             print_warn "Neofetch is not in the Arch official repositories."
             print_info "Arch users can use AUR, while Fastfetch is the recommended modern alternative."
-            install_aur_package "neofetch" "Neofetch" || true
-        elif [[ "$slug" == "peaclock" || "$slug" == "hyfetch" ]]; then
-            install_aur_package "${UTIL_PACMAN[$slug]}" "$name"
+            install_aur_package "neofetch" "Neofetch"
         else
             print_err "Package not available in the configured Arch repositories: ${UTIL_PACMAN[$slug]}"
             return 1
@@ -1352,7 +1393,7 @@ process_selection() {
                 show_categories_page
                 ;;
             "$opt_bazaar")
-                install_bazaar || true
+                launch_bazaar || true
                 ;;
             "$opt_update")
                 update_system || true
@@ -1397,17 +1438,13 @@ ${LUXURY_TITLE} v${VERSION}
 
 Usage:
   luxury                  Open the interactive menu
-  luxury install         Install the luxury command
-  luxury update          Force-update the installed command
+  luxury update          Update the installed Luxury command
   luxury uninstall       Remove Luxury Downloader
   luxury --version       Show version
   luxury --help          Show this help
 
-Temporary use (no installation):
+First-time installation:
   curl -fsSL ${UPDATE_URL} | bash
-
-One-line installation:
-  curl -fsSL ${UPDATE_URL} | bash -s -- install
 EOF
 }
 
@@ -1427,10 +1464,6 @@ main() {
             printf '%s v%s\n' "$LUXURY_TITLE" "$VERSION"
             return 0
             ;;
-        install)
-            install_self
-            return $?
-            ;;
         uninstall|remove)
             uninstall_self
             return $?
@@ -1447,6 +1480,13 @@ main() {
             return 2
             ;;
     esac
+
+    # The only way to install Luxury is the official first-time setup
+    # command (curl | bash). Once installed, plain `luxury` opens the UI.
+    if [[ ! -f "$INSTALL_PATH" ]]; then
+        bootstrap_install || return $?
+        exec "$INSTALL_PATH"
+    fi
 
     require_command bash || return 1
     require_command uname || return 1
