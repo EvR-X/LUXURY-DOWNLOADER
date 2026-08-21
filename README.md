@@ -24,8 +24,7 @@ Luxury Downloader is an interactive terminal application that can:
 - Detect applications that are already installed.
 - Update the Linux system.
 - Check whether a newer Luxury Downloader version is available.
-- Install Luxury permanently as the `luxury` command.
-- Run Luxury once without installing it.
+- Install Luxury as the `luxury` command.
 - Update or uninstall the installed `luxury` command.
 - Organize additional tools into separate categories.
 
@@ -42,7 +41,7 @@ Example:
 ```text
 ╔══════════════════════════════════════════════════╗
 ║                 LUXURY DOWNLOADER                ║
-║                     v2.1.2                       ║
+║                     v2.1.4                       ║
 ╚══════════════════════════════════════════════════╝
 
   System:       Ubuntu 26.04 LTS
@@ -87,7 +86,6 @@ The option numbers are generated automatically from the application's registry, 
 | LibreOffice | APT | `libreoffice-still` |
 | MPV | APT | Pacman |
 
-Luxury checks whether an application is already installed before attempting to install it.
 
 ---
 
@@ -304,7 +302,7 @@ Luxury first checks the configured Arch repositories. If the package is not avai
 
 #### Neofetch on Arch
 
-If `neofetch` is not available from the configured official repositories, Luxury warns the user and can use the AUR helper. It also points out that Fastfetch is the recommended modern alternative.
+If `neofetch` is not available from the configured official repositories, Luxury warns the user and can use the AUR helper. 
 
 ---
 
@@ -312,9 +310,6 @@ If `neofetch` is not available from the configured official repositories, Luxury
 
 **Bazaar** is available directly from the main menu:
 
-```text
-[8] Bazaar (Flatpak App Store)
-```
 
 When Bazaar is selected, Luxury automatically checks the Flatpak environment.
 
@@ -420,8 +415,6 @@ It does **not** install:
 - Drivers & Firmware
 - Terminal Utilities
 - Bazaar
-
-`btop` is deliberately excluded because it belongs only to **Terminal Utilities**.
 
 Luxury continues through the application list and reports when one or more installations fail instead of silently treating every result as successful.
 
