@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.1.9"
+VERSION="2.2.0"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -698,10 +698,192 @@ install_librewolf_arch() {
 }
 
 # ============================================================
+#                   LOCALSEND + RETROARCH
+# ============================================================
+
+install_localsend_debian() {
+    # Official source: https://localsend.org/download
+    # LocalSend's official Linux download page currently lists Flathub as the
+    # distro-independent package-manager route, including the official app ID.
+    if command -v flatpak >/dev/null 2>&1 && flatpak info "org.localsend.localsend_app" >/dev/null 2>&1; then
+        print_ok "LocalSend is already installed."
+        return 0
+    fi
+
+    install_flatpak || return 1
+    ensure_flathub || return 1
+
+    print_info "Installing LocalSend from the official Flathub package..."
+    if flatpak install -y flathub "org.localsend.localsend_app"; then
+        print_ok "LocalSend installed."
+        return 0
+    fi
+
+    print_err "LocalSend installation failed."
+    return 1
+}
+
+install_localsend_arch() {
+    if ! detect_aur_helper >/dev/null 2>&1; then
+        print_info "No AUR helper detected. Installing Yay automatically..."
+        install_aur_helper yay || return 1
+    fi
+
+    install_aur_package "localsend-bin" "LocalSend"
+}
+
+add_libretro_ppa() {
+    # Official RetroArch Linux docs: https://docs.libretro.com/guides/install-gnu/
+    # Libretro Stable PPA: https://launchpad.net/~libretro/+archive/ubuntu/stable
+    [[ "$DISTRO_FAMILY" == "debian" ]] || return 1
+
+    # The Libretro Team documents this PPA for Ubuntu and Ubuntu-based systems.
+    # Plain Debian falls back to its normal APT repositories below.
+    case "$DISTRO_ID" in
+        ubuntu|linuxmint|pop|neon|zorin|elementary|lubuntu|kubuntu|xubuntu|ubuntu-mate|budgie-remix)
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    install_apt_package "software-properties-common" "Software properties" || return 1
+    require_command add-apt-repository || return 1
+
+    if ! grep -Rqs '^deb .*ppa\.launchpadcontent\.net/libretro/stable\|^deb .*ppa:libretro/stable' \
+        /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+        print_info "Adding the official Libretro Stable PPA..."
+        if ! $SUDO add-apt-repository --yes --no-update ppa:libretro/stable; then
+            print_err "Could not add the Libretro Stable PPA."
+            return 1
+        fi
+    fi
+
+    apt_update
+}
+
+configure_retroarch_system_core_dir() {
+    local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/retroarch/retroarch.cfg"
+    mkdir -p "$(dirname "$cfg")" 2>/dev/null || return 0
+
+    if [[ -f "$cfg" ]]; then
+        if grep -qE '^core_directory[[:space:]]*=' "$cfg"; then
+            sed -i 's|^core_directory[[:space:]]*=.*|core_directory = "/usr/lib/libretro"|' "$cfg" || true
+        else
+            printf '\ncore_directory = "/usr/lib/libretro"\n' >> "$cfg"
+        fi
+    else
+        printf 'core_directory = "/usr/lib/libretro"\n' > "$cfg"
+    fi
+}
+
+install_retroarch_debian() {
+    local installed_cores=0
+    local package
+
+    add_libretro_ppa || return 1
+
+    install_apt_package "retroarch" "RetroArch" || return 1
+
+    # Ubuntu/Libretro use these package names for the core variants currently
+    # available through APT. We test availability before installation so a
+    # distro snapshot missing one optional variant does not abort the whole job.
+    local -a cores=(
+        "libretro-nestopia"
+        "libretro-mesen"
+        "libretro-snes9x"
+        "libretro-bsnes-mercury-accuracy"
+        "libretro-bsnes-mercury-balanced"
+        "libretro-bsnes-mercury-performance"
+        "libretro-mgba"
+        "libretro-gambatte"
+        "libretro-sameboy"
+        "libretro-desmume"
+        "libretro-melonds"
+        "libretro-mupen64plus-next"
+        "libretro-mupen64plus"
+        "libretro-parallel-n64"
+        "libretro-genesisplusgx"
+        "libretro-picodrive"
+    )
+
+    print_info "Installing the main Libretro cores and variants..."
+    for package in "${cores[@]}"; do
+        if apt_has_package "$package"; then
+            if install_apt_package "$package" "$package"; then
+                installed_cores=$((installed_cores + 1))
+            fi
+        else
+            print_warn "Core package not available in this APT source: $package (skipped)."
+        fi
+    done
+
+    configure_retroarch_system_core_dir
+
+    if (( installed_cores == 0 )); then
+        print_err "RetroArch was installed, but no requested Libretro core package was available."
+        print_info "Open RetroArch -> Online Updater -> Core Downloader to add cores supported by this build."
+        return 1
+    fi
+
+    print_ok "RetroArch and $installed_cores core package(s) installed."
+    return 0
+}
+
+install_retroarch_arch() {
+    # Official Arch package group: https://archlinux.org/groups/x86_64/libretro/
+    local package
+    local installed_cores=0
+
+    install_pacman_package "retroarch" "RetroArch" || return 1
+
+    # Arch Linux ships these cores in the official Extra/libretro group.
+    local -a cores=(
+        "libretro-nestopia"
+        "libretro-mesen"
+        "libretro-snes9x"
+        "libretro-mesen-s"
+        "libretro-bsnes"
+        "libretro-bsnes-hd"
+        "libretro-mgba"
+        "libretro-gambatte"
+        "libretro-sameboy"
+        "libretro-desmume"
+        "libretro-melonds"
+        "libretro-mupen64plus-next"
+        "libretro-parallel-n64"
+        "libretro-genesis-plus-gx"
+        "libretro-picodrive"
+        "libretro-blastem"
+    )
+
+    print_info "Installing the main Libretro cores and variants..."
+    for package in "${cores[@]}"; do
+        if pacman_has_package "$package"; then
+            if install_pacman_package "$package" "$package"; then
+                installed_cores=$((installed_cores + 1))
+            fi
+        else
+            print_warn "Core package not available in the configured Arch repositories: $package (skipped)."
+        fi
+    done
+
+    configure_retroarch_system_core_dir
+
+    if (( installed_cores == 0 )); then
+        print_err "RetroArch was installed, but no requested Libretro core package was available."
+        return 1
+    fi
+
+    print_ok "RetroArch and $installed_cores core package(s) installed."
+    return 0
+}
+
+# ============================================================
 #                       MAIN APP REGISTRY
 # ============================================================
 
-APP_ORDER=(brave thunderbird librewolf vlc libreoffice mpv)
+APP_ORDER=(brave thunderbird librewolf vlc libreoffice mpv localsend retroarch)
 
 declare -A APP_NAME=(
     [brave]="Brave Origin"
@@ -710,6 +892,8 @@ declare -A APP_NAME=(
     [vlc]="VLC"
     [libreoffice]="LibreOffice"
     [mpv]="MPV"
+    [localsend]="LocalSend"
+    [retroarch]="RetroArch + Cores"
 )
 
 declare -A APP_PKG_DEBIAN=(
@@ -729,11 +913,15 @@ declare -A APP_PKG_ARCH=(
 declare -A APP_CUSTOM_DEBIAN=(
     [brave]="install_brave_origin_debian"
     [librewolf]="install_librewolf_debian"
+    [localsend]="install_localsend_debian"
+    [retroarch]="install_retroarch_debian"
 )
 
 declare -A APP_CUSTOM_ARCH=(
     [brave]="install_brave_origin_arch"
     [librewolf]="install_librewolf_arch"
+    [localsend]="install_localsend_arch"
+    [retroarch]="install_retroarch_arch"
 )
 
 install_app_by_slug() {
@@ -884,6 +1072,29 @@ install_nvidia_dkms_arch() {
     install_pacman_package "nvidia-open-dkms" "NVIDIA Open DKMS Driver"
 }
 
+# Since 2025-12-20 Arch's official nvidia/nvidia-dkms packages were replaced
+# by nvidia-open/nvidia-open-dkms. The open kernel modules require the GPU
+# System Processor (GSP), introduced with Turing, so they cannot run on
+# Maxwell (GTX 900) or Pascal (GTX 10xx) or older cards. Those cards need
+# the community-maintained legacy branch from the AUR instead.
+install_nvidia_legacy_arch() {
+    print_warn "For GTX 900 (Maxwell) / GTX 10xx (Pascal) and older cards only."
+    print_info "If the official nvidia, nvidia-lts or nvidia-dkms packages are installed, remove them first to avoid conflicts."
+
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        print_err "Do not build AUR packages as root."
+        print_info "Run Luxury as your normal user."
+        return 1
+    fi
+
+    if ! detect_aur_helper >/dev/null 2>&1; then
+        print_info "No AUR helper detected. Installing Yay automatically..."
+        install_aur_helper yay || return 1
+    fi
+
+    install_aur_package "nvidia-580xx-dkms" "NVIDIA Legacy Driver (580xx)"
+}
+
 install_amd_gpu_arch() {
     ensure_arch_packages mesa vulkan-radeon linux-firmware
 }
@@ -978,13 +1189,14 @@ show_drivers_page() {
         echo
 
         if [[ "$DISTRO_FAMILY" == "arch" ]]; then
-            echo "  [1] NVIDIA Open"
-            echo "  [2] NVIDIA Open + DKMS"
-            echo "  [3] AMD GPU"
-            echo "  [4] AMD CPU Microcode"
-            echo "  [5] Intel GPU"
-            echo "  [6] Intel CPU Microcode"
-            echo "  [7] Firmware"
+            echo "  [1] NVIDIA Open (Turing / RTX, GTX 16xx and newer)"
+            echo "  [2] NVIDIA Open + DKMS (Turing / RTX, GTX 16xx and newer)"
+            echo "  [3] NVIDIA Legacy (GTX 900 Maxwell / GTX 10xx Pascal and older)"
+            echo "  [4] AMD GPU"
+            echo "  [5] AMD CPU Microcode"
+            echo "  [6] Intel GPU"
+            echo "  [7] Intel CPU Microcode"
+            echo "  [8] Firmware"
         else
             echo "  [1] NVIDIA (recommended Ubuntu driver)"
             echo "  [2] AMD GPU"
@@ -1004,11 +1216,12 @@ show_drivers_page() {
             case "$choice" in
                 1) install_nvidia_arch || true; press_enter ;;
                 2) install_nvidia_dkms_arch || true; press_enter ;;
-                3) install_amd_gpu_arch || true; press_enter ;;
-                4) install_amd_cpu_arch || true; press_enter ;;
-                5) install_intel_gpu_arch || true; press_enter ;;
-                6) install_intel_cpu_arch || true; press_enter ;;
-                7) install_firmware_arch || true; press_enter ;;
+                3) install_nvidia_legacy_arch || true; press_enter ;;
+                4) install_amd_gpu_arch || true; press_enter ;;
+                5) install_amd_cpu_arch || true; press_enter ;;
+                6) install_intel_gpu_arch || true; press_enter ;;
+                7) install_intel_cpu_arch || true; press_enter ;;
+                8) install_firmware_arch || true; press_enter ;;
                 0) return 0 ;;
                 *) print_warn "Invalid option." ;;
             esac
@@ -1417,6 +1630,7 @@ process_selection() {
     local input="$1"
     local item
     local slug
+    local -a items
 
     local n=${#APP_ORDER[@]}
     local opt_categories=$((n + 1))
