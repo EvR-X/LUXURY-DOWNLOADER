@@ -8,7 +8,7 @@
 ## Features
 
 - Detects your distro, family, and architecture
-- Installs Brave Origin, Thunderbird, LibreWolf, VLC, LibreOffice, MPV, ETC
+- Includes Brave Origin, Thunderbird, LibreWolf, VLC, LibreOffice, MPV, ETC
 - Installs GPU/CPU drivers and firmware
 - Sets up AUR helpers (Yay, Paru) on Arch
 - Adds terminal utilities: btop, htop, Fastfetch, and more
