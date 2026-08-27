@@ -1,6 +1,5 @@
 # Luxury Downloader
 
-[![Release](https://img.shields.io/github/v/release/EvR-X/LUXURY-DOWNLOADER?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
 [![License](https://img.shields.io/github/license/EvR-X/LUXURY-DOWNLOADER?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/blob/main/LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/EvR-X/LUXURY-DOWNLOADER?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/commits/main)
 
