@@ -41,3 +41,21 @@ Example:
   [9] Update System
   [10] Install ALL Apps
   [0] Exit
+```
+
+The option numbers are generated automatically from the application's registry, so the menu stays synchronized with the actual application list.
+
+## Install
+
+```sh
+$ curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
+```
+
+## Usage
+
+```sh
+$ luxury            # open the menu
+$ luxury update     # update Luxury
+$ luxury uninstall  # remove Luxury
+$ luxury --version  # show version
+```
