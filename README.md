@@ -15,6 +15,35 @@
 - Opens Bazaar, a Flatpak app store
 - Updates your system or itself
 
+The main screen is intentionally kept focused on the most commonly installed applications and the most important actions.
+
+Example:
+
+```text
+╔══════════════════════════════════════════════════╗
+║                 LUXURY DOWNLOADER                ║
+║                     v2.1.2                       ║
+╚══════════════════════════════════════════════════╝
+
+  System:       Ubuntu 26.04 LTS
+  Family:       debian
+  Architecture: x86_64
+
+  [1] Brave Origin
+  [2] Thunderbird
+  [3] LibreWolf
+  [4] VLC
+  [5] LibreOffice
+  [6] MPV
+
+  [7] Categories
+  [8] Bazaar (Flatpak App Store)
+  [9] Update System
+  [10] Install ALL Apps
+  [0] Exit
+```
+The option numbers are generated automatically from the application's registry, so the menu stays synchronized with the actual application list.
+
 ## Install
 
 ```sh
