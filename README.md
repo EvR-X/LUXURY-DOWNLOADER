@@ -21,8 +21,8 @@ Example:
 
 ```text
 ╔══════════════════════════════════════════════════╗
-║                LUXURY DOWNLOADER                 ║
-║                 YOUR DISTRO NAME                 ║
+║                      LUXURY DOWNLOADER                    ║
+║                      (YOUR DISTRO NAME)                   ║
 ╚══════════════════════════════════════════════════╝
 
   System:       Ubuntu 26.04 LTS
