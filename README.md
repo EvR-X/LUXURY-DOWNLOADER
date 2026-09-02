@@ -48,7 +48,7 @@ The option numbers are generated automatically from the application's registry, 
 ## Install
 
 ```sh
-$ curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
+ curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
 ```
 
 ## Usage
