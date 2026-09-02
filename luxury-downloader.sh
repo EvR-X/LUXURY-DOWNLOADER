@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.2.0"
+VERSION="2.3.5"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -801,7 +801,6 @@ install_retroarch_debian() {
         "libretro-desmume"
         "libretro-melonds"
         "libretro-mupen64plus-next"
-        "libretro-mupen64plus"
         "libretro-parallel-n64"
         "libretro-genesisplusgx"
         "libretro-picodrive"
@@ -880,10 +879,153 @@ install_retroarch_arch() {
 }
 
 # ============================================================
+#                         VENTOY
+# ============================================================
+# Multiboot USB creation tool. Has no APT package anywhere (not
+# in Debian, Ubuntu, or any PPA); on Arch it's AUR-only. Note:
+# the ArchWiki flags that upstream has stayed unresponsive about
+# the toolchain behind its precompiled bits, which is why this
+# uses the AUR's source-build "ventoy" package rather than the
+# prebuilt "ventoy-bin" one.
+
+install_ventoy_arch() {
+    install_aur_package "ventoy" "Ventoy"
+}
+
+install_ventoy_debian() {
+    if [[ -x /opt/ventoy/Ventoy2Disk.sh ]] || command -v ventoy2disk >/dev/null 2>&1; then
+        print_ok "Ventoy is already installed."
+        return 0
+    fi
+
+    case "$(uname -m)" in
+        x86_64|amd64|aarch64|arm64|mips64) ;;
+        *)
+            print_err "No official Ventoy Linux build for this architecture: $(uname -m)"
+            return 1
+            ;;
+    esac
+
+    require_command curl || return 1
+    require_command tar || return 1
+    check_sudo || return 1
+
+    print_info "Ventoy has no APT package; downloading the official release from GitHub..."
+
+    local tag version download_url tmpdir extracted
+    tag="$(curl -fsSL --connect-timeout 5 --max-time 10 \
+        "https://api.github.com/repos/ventoy/Ventoy/releases/latest" 2>/dev/null \
+        | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 \
+        | sed -E 's/.*"([^"]+)"$/\1/')"
+
+    if [[ -z "$tag" ]]; then
+        print_err "Could not determine the latest Ventoy release from GitHub."
+        return 1
+    fi
+
+    version="${tag#v}"
+    # A single "linux" tarball covers x86_64/i386/aarch64/mips64; Ventoy
+    # does not publish separate per-architecture Linux archives.
+    download_url="https://github.com/ventoy/Ventoy/releases/download/${tag}/ventoy-${version}-linux.tar.gz"
+
+    tmpdir="$(mktemp -d)" || { print_err "Could not create a temporary directory."; return 1; }
+
+    print_info "Downloading Ventoy ${version}..."
+    if ! curl -fLsS --connect-timeout 5 --max-time 60 "$download_url" -o "$tmpdir/ventoy.tar.gz"; then
+        print_err "Could not download Ventoy ${version}."
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    if ! tar -xzf "$tmpdir/ventoy.tar.gz" -C "$tmpdir"; then
+        print_err "Could not extract the Ventoy archive."
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    extracted="$(find "$tmpdir" -maxdepth 1 -type d -name 'ventoy-*' | head -n1)"
+
+    if [[ -z "$extracted" ]]; then
+        print_err "Unexpected Ventoy archive layout."
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    $SUDO rm -rf /opt/ventoy
+    if ! $SUDO mkdir -p /opt/ventoy || ! $SUDO cp -r "$extracted"/. /opt/ventoy/; then
+        print_err "Could not install Ventoy to /opt/ventoy."
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    $SUDO chmod +x /opt/ventoy/*.sh 2>/dev/null || true
+    [[ -f /opt/ventoy/Ventoy2Disk.sh ]] && $SUDO ln -sf /opt/ventoy/Ventoy2Disk.sh /usr/local/bin/ventoy2disk
+    [[ -f /opt/ventoy/VentoyGUI.sh ]] && $SUDO ln -sf /opt/ventoy/VentoyGUI.sh /usr/local/bin/ventoygui
+
+    rm -rf "$tmpdir"
+    print_ok "Ventoy ${version} installed to /opt/ventoy."
+    print_info "Run 'sudo ventoy2disk' (CLI) or 'ventoygui' (GUI) to write it to a USB drive."
+    return 0
+}
+
+# ============================================================
+#                      TASK MANAGER OG (TMOG)
+# ============================================================
+# Native cross-platform task manager by David Plummer (creator
+# of the original Windows Task Manager). Currently in beta; the
+# Linux build is a Qt 6 app. Upstream does not permit
+# redistributing the binary, so both paths below always fetch
+# it straight from tmog.org, same as its AUR packaging does.
+
+install_tmog_debian() {
+    if command -v tmog-task-manager >/dev/null 2>&1 || command -v tmog >/dev/null 2>&1; then
+        print_ok "Task Manager OG is already installed."
+        return 0
+    fi
+
+    if [[ "$(uname -m)" != "x86_64" && "$(uname -m)" != "amd64" ]]; then
+        print_err "Task Manager OG's Linux build is x86_64-only."
+        return 1
+    fi
+
+    require_command curl || return 1
+    check_sudo || return 1
+
+    print_info "Downloading Task Manager OG (beta) from tmog.org..."
+
+    local tmpdeb
+    tmpdeb="$(mktemp --suffix=.deb)" || { print_err "Could not create a temporary file."; return 1; }
+
+    if ! curl -fLsS --connect-timeout 5 --max-time 60 \
+        "https://tmog.org/downloads/TMOG-Task-Manager-Linux-x86_64.deb" -o "$tmpdeb"; then
+        print_err "Could not download Task Manager OG."
+        rm -f "$tmpdeb"
+        return 1
+    fi
+
+    ensure_apt_synced
+    print_info "Installing Task Manager OG (this pulls in Qt 6 if it's missing)..."
+
+    if $SUDO apt install -y "$tmpdeb"; then
+        print_ok "Task Manager OG installed."
+        rm -f "$tmpdeb"
+        return 0
+    fi
+
+    print_err "Could not install Task Manager OG."
+    rm -f "$tmpdeb"
+    return 1
+}
+
+install_tmog_arch() {
+    install_aur_package "tmog-bin" "Task Manager OG"
+}
+
+# ============================================================
 #                       MAIN APP REGISTRY
 # ============================================================
 
-APP_ORDER=(brave thunderbird librewolf vlc libreoffice mpv localsend retroarch)
+APP_ORDER=(brave thunderbird librewolf vlc libreoffice mpv localsend retroarch ventoy 7zip unrar tmog)
 
 declare -A APP_NAME=(
     [brave]="Brave Origin"
@@ -894,6 +1036,10 @@ declare -A APP_NAME=(
     [mpv]="MPV"
     [localsend]="LocalSend"
     [retroarch]="RetroArch + Cores"
+    [ventoy]="Ventoy"
+    [7zip]="7-Zip"
+    [unrar]="unrar (RAR extractor)"
+    [tmog]="Task Manager OG (beta)"
 )
 
 declare -A APP_PKG_DEBIAN=(
@@ -901,6 +1047,8 @@ declare -A APP_PKG_DEBIAN=(
     [vlc]="vlc"
     [libreoffice]="libreoffice"
     [mpv]="mpv"
+    [7zip]="7zip"
+    [unrar]="unrar"
 )
 
 declare -A APP_PKG_ARCH=(
@@ -908,6 +1056,8 @@ declare -A APP_PKG_ARCH=(
     [vlc]="vlc"
     [libreoffice]="libreoffice-still"
     [mpv]="mpv"
+    [7zip]="7zip"
+    [unrar]="unrar"
 )
 
 declare -A APP_CUSTOM_DEBIAN=(
@@ -915,6 +1065,8 @@ declare -A APP_CUSTOM_DEBIAN=(
     [librewolf]="install_librewolf_debian"
     [localsend]="install_localsend_debian"
     [retroarch]="install_retroarch_debian"
+    [ventoy]="install_ventoy_debian"
+    [tmog]="install_tmog_debian"
 )
 
 declare -A APP_CUSTOM_ARCH=(
@@ -922,6 +1074,8 @@ declare -A APP_CUSTOM_ARCH=(
     [librewolf]="install_librewolf_arch"
     [localsend]="install_localsend_arch"
     [retroarch]="install_retroarch_arch"
+    [ventoy]="install_ventoy_arch"
+    [tmog]="install_tmog_arch"
 )
 
 install_app_by_slug() {
@@ -1003,12 +1157,16 @@ install_aur_helper() {
             ;;
     esac
 
-    # makepkg should run as the invoking normal user, not root.
-    chown -R "${SUDO_USER:-${USER}}" "$tmpdir" 2>/dev/null || true
+    # makepkg should run as the invoking normal user, not root. id -un is
+    # used as the fallback (not a bare $USER) because $USER isn't always
+    # exported — e.g. some non-interactive invocations — and referencing
+    # an unset $USER here would crash the whole script under `set -u`.
+    local build_user="${SUDO_USER:-$(id -un)}"
+    chown -R "$build_user" "$tmpdir" 2>/dev/null || true
 
     print_info "Building $helper..."
 
-    if sudo -u "${SUDO_USER:-${USER}}" bash -lc \
+    if sudo -u "$build_user" bash -lc \
         "cd '$tmpdir/${helper}-bin' && makepkg -si --noconfirm"; then
         print_ok "$helper installed."
         AUR_HELPER="$helper"
@@ -1332,7 +1490,7 @@ install_lavat() {
     return 0
 }
 
-UTIL_ORDER=(cmatrix cava lavat peaclock fastfetch neofetch hyfetch btop htop)
+UTIL_ORDER=(cmatrix cava lavat peaclock fastfetch sl btop htop)
 
 declare -A UTIL_NAME=(
     [cmatrix]="CMatrix"
@@ -1340,8 +1498,7 @@ declare -A UTIL_NAME=(
     [lavat]="lavat"
     [peaclock]="Peaclock"
     [fastfetch]="Fastfetch"
-    [neofetch]="Neofetch / Neowofetch"
-    [hyfetch]="HyFetch"
+    [sl]="sl (Steam Locomotive)"
     [btop]="btop"
     [htop]="htop"
 )
@@ -1350,8 +1507,7 @@ declare -A UTIL_APT=(
     [cmatrix]="cmatrix"
     [cava]="cava"
     [fastfetch]="fastfetch"
-    [neofetch]="neowofetch"
-    [hyfetch]="hyfetch"
+    [sl]="sl"
     [btop]="btop"
     [htop]="htop"
 )
@@ -1360,8 +1516,7 @@ declare -A UTIL_PACMAN=(
     [cmatrix]="cmatrix"
     [cava]="cava"
     [fastfetch]="fastfetch"
-    [neofetch]="neofetch"
-    [hyfetch]="hyfetch"
+    [sl]="sl"
     [btop]="btop"
     [htop]="htop"
 )
@@ -1389,10 +1544,6 @@ install_utility() {
     else
         if pacman_has_package "${UTIL_PACMAN[$slug]}"; then
             install_pacman_package "${UTIL_PACMAN[$slug]}" "$name"
-        elif [[ "$slug" == "neofetch" ]]; then
-            print_warn "Neofetch is not in the Arch official repositories."
-            print_info "Arch users can use AUR, while Fastfetch is the recommended modern alternative."
-            install_aur_package "neofetch" "Neofetch"
         else
             print_err "Package not available in the configured Arch repositories: ${UTIL_PACMAN[$slug]}"
             return 1
@@ -1468,7 +1619,35 @@ ensure_flathub() {
     return 1
 }
 
+install_bazaar_native() {
+    if command -v bazaar >/dev/null 2>&1; then
+        print_ok "Bazaar is already installed."
+        return 0
+    fi
+
+    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+        ensure_apt_synced
+        apt_has_package "bazaar" || return 1
+
+        # Ubuntu 26.04+ ships a native APT package (universe) and Bazaar's
+        # own developers now recommend it over the Flatpak build on that
+        # release: recent Ubuntu tightened the sandboxing rules that
+        # Bazaar's Flatpak needs (the fusermount wrapper), which broke
+        # Flatpak installs from within it. Older Ubuntu/Debian/Mint don't
+        # have this package yet, so this simply falls through to Flatpak.
+        print_info "Using the native APT package (recommended by Bazaar upstream on this Ubuntu release)."
+        install_apt_package "bazaar" "Bazaar (App Store)"
+    else
+        pacman_has_package "bazaar" || return 1
+        install_pacman_package "bazaar" "Bazaar (App Store)"
+    fi
+}
+
 install_bazaar() {
+    if install_bazaar_native; then
+        return 0
+    fi
+
     if ! install_flatpak; then
         return 1
     fi
@@ -1492,11 +1671,23 @@ install_bazaar() {
 }
 
 launch_bazaar() {
+    if command -v bazaar >/dev/null 2>&1; then
+        print_info "Launching Bazaar..."
+        bazaar >/dev/null 2>&1 &
+        return 0
+    fi
+
     if ! command -v flatpak >/dev/null 2>&1; then
         print_warn "Flatpak is not installed."
         install_bazaar || return 1
     elif ! flatpak info "$BAZAAR_FLATPAK_ID" >/dev/null 2>&1; then
         install_bazaar || return 1
+    fi
+
+    if command -v bazaar >/dev/null 2>&1; then
+        print_info "Launching Bazaar..."
+        bazaar >/dev/null 2>&1 &
+        return 0
     fi
 
     print_info "Launching Bazaar..."
@@ -1619,7 +1810,7 @@ show_main_menu() {
 
     echo
     printf '  [%d] Categories\n' "$opt_categories"
-    printf '  [%d] Bazaar (Flatpak App Store)\n' "$opt_bazaar"
+    printf '  [%d] Bazaar (App Store)\n' "$opt_bazaar"
     printf '  [%d] Update System\n' "$opt_update"
     printf '  [%d] Install ALL Apps\n' "$opt_all"
     echo "  [0] Exit"
