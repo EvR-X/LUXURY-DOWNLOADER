@@ -26,12 +26,11 @@
 
 set -u
 
-VERSION="2.3.5"
+VERSION="2.4.0"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
 UPDATE_URL="https://raw.githubusercontent.com/${REPO}/main/luxury-downloader.sh"
-BAZAAR_FLATPAK_ID="io.github.kolunmi.Bazaar"
 
 DISTRO_FAMILY=""
 DISTRO_ID=""
@@ -39,6 +38,11 @@ DISTRO_NAME=""
 SUDO="sudo"
 APT_SYNCED=false
 AUR_HELPER=""
+# Set by process_selection when Categories was used, so main()'s loop
+# skips its own "Press Enter to return..." pause: the category pages
+# already pause after each individual action, so this avoids stacking
+# a second, redundant confirmation on top of those.
+SKIP_MAIN_PAUSE=false
 
 # ============================================================
 #                         UI
@@ -879,153 +883,10 @@ install_retroarch_arch() {
 }
 
 # ============================================================
-#                         VENTOY
-# ============================================================
-# Multiboot USB creation tool. Has no APT package anywhere (not
-# in Debian, Ubuntu, or any PPA); on Arch it's AUR-only. Note:
-# the ArchWiki flags that upstream has stayed unresponsive about
-# the toolchain behind its precompiled bits, which is why this
-# uses the AUR's source-build "ventoy" package rather than the
-# prebuilt "ventoy-bin" one.
-
-install_ventoy_arch() {
-    install_aur_package "ventoy" "Ventoy"
-}
-
-install_ventoy_debian() {
-    if [[ -x /opt/ventoy/Ventoy2Disk.sh ]] || command -v ventoy2disk >/dev/null 2>&1; then
-        print_ok "Ventoy is already installed."
-        return 0
-    fi
-
-    case "$(uname -m)" in
-        x86_64|amd64|aarch64|arm64|mips64) ;;
-        *)
-            print_err "No official Ventoy Linux build for this architecture: $(uname -m)"
-            return 1
-            ;;
-    esac
-
-    require_command curl || return 1
-    require_command tar || return 1
-    check_sudo || return 1
-
-    print_info "Ventoy has no APT package; downloading the official release from GitHub..."
-
-    local tag version download_url tmpdir extracted
-    tag="$(curl -fsSL --connect-timeout 5 --max-time 10 \
-        "https://api.github.com/repos/ventoy/Ventoy/releases/latest" 2>/dev/null \
-        | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 \
-        | sed -E 's/.*"([^"]+)"$/\1/')"
-
-    if [[ -z "$tag" ]]; then
-        print_err "Could not determine the latest Ventoy release from GitHub."
-        return 1
-    fi
-
-    version="${tag#v}"
-    # A single "linux" tarball covers x86_64/i386/aarch64/mips64; Ventoy
-    # does not publish separate per-architecture Linux archives.
-    download_url="https://github.com/ventoy/Ventoy/releases/download/${tag}/ventoy-${version}-linux.tar.gz"
-
-    tmpdir="$(mktemp -d)" || { print_err "Could not create a temporary directory."; return 1; }
-
-    print_info "Downloading Ventoy ${version}..."
-    if ! curl -fLsS --connect-timeout 5 --max-time 60 "$download_url" -o "$tmpdir/ventoy.tar.gz"; then
-        print_err "Could not download Ventoy ${version}."
-        rm -rf "$tmpdir"
-        return 1
-    fi
-
-    if ! tar -xzf "$tmpdir/ventoy.tar.gz" -C "$tmpdir"; then
-        print_err "Could not extract the Ventoy archive."
-        rm -rf "$tmpdir"
-        return 1
-    fi
-
-    extracted="$(find "$tmpdir" -maxdepth 1 -type d -name 'ventoy-*' | head -n1)"
-
-    if [[ -z "$extracted" ]]; then
-        print_err "Unexpected Ventoy archive layout."
-        rm -rf "$tmpdir"
-        return 1
-    fi
-
-    $SUDO rm -rf /opt/ventoy
-    if ! $SUDO mkdir -p /opt/ventoy || ! $SUDO cp -r "$extracted"/. /opt/ventoy/; then
-        print_err "Could not install Ventoy to /opt/ventoy."
-        rm -rf "$tmpdir"
-        return 1
-    fi
-
-    $SUDO chmod +x /opt/ventoy/*.sh 2>/dev/null || true
-    [[ -f /opt/ventoy/Ventoy2Disk.sh ]] && $SUDO ln -sf /opt/ventoy/Ventoy2Disk.sh /usr/local/bin/ventoy2disk
-    [[ -f /opt/ventoy/VentoyGUI.sh ]] && $SUDO ln -sf /opt/ventoy/VentoyGUI.sh /usr/local/bin/ventoygui
-
-    rm -rf "$tmpdir"
-    print_ok "Ventoy ${version} installed to /opt/ventoy."
-    print_info "Run 'sudo ventoy2disk' (CLI) or 'ventoygui' (GUI) to write it to a USB drive."
-    return 0
-}
-
-# ============================================================
-#                      TASK MANAGER OG (TMOG)
-# ============================================================
-# Native cross-platform task manager by David Plummer (creator
-# of the original Windows Task Manager). Currently in beta; the
-# Linux build is a Qt 6 app. Upstream does not permit
-# redistributing the binary, so both paths below always fetch
-# it straight from tmog.org, same as its AUR packaging does.
-
-install_tmog_debian() {
-    if command -v tmog-task-manager >/dev/null 2>&1 || command -v tmog >/dev/null 2>&1; then
-        print_ok "Task Manager OG is already installed."
-        return 0
-    fi
-
-    if [[ "$(uname -m)" != "x86_64" && "$(uname -m)" != "amd64" ]]; then
-        print_err "Task Manager OG's Linux build is x86_64-only."
-        return 1
-    fi
-
-    require_command curl || return 1
-    check_sudo || return 1
-
-    print_info "Downloading Task Manager OG (beta) from tmog.org..."
-
-    local tmpdeb
-    tmpdeb="$(mktemp --suffix=.deb)" || { print_err "Could not create a temporary file."; return 1; }
-
-    if ! curl -fLsS --connect-timeout 5 --max-time 60 \
-        "https://tmog.org/downloads/TMOG-Task-Manager-Linux-x86_64.deb" -o "$tmpdeb"; then
-        print_err "Could not download Task Manager OG."
-        rm -f "$tmpdeb"
-        return 1
-    fi
-
-    ensure_apt_synced
-    print_info "Installing Task Manager OG (this pulls in Qt 6 if it's missing)..."
-
-    if $SUDO apt install -y "$tmpdeb"; then
-        print_ok "Task Manager OG installed."
-        rm -f "$tmpdeb"
-        return 0
-    fi
-
-    print_err "Could not install Task Manager OG."
-    rm -f "$tmpdeb"
-    return 1
-}
-
-install_tmog_arch() {
-    install_aur_package "tmog-bin" "Task Manager OG"
-}
-
-# ============================================================
 #                       MAIN APP REGISTRY
 # ============================================================
 
-APP_ORDER=(brave thunderbird librewolf vlc libreoffice mpv localsend retroarch ventoy 7zip unrar tmog)
+APP_ORDER=(brave thunderbird librewolf vlc libreoffice mpv localsend retroarch 7zip unrar)
 
 declare -A APP_NAME=(
     [brave]="Brave Origin"
@@ -1036,10 +897,8 @@ declare -A APP_NAME=(
     [mpv]="MPV"
     [localsend]="LocalSend"
     [retroarch]="RetroArch + Cores"
-    [ventoy]="Ventoy"
     [7zip]="7-Zip"
     [unrar]="unrar (RAR extractor)"
-    [tmog]="Task Manager OG (beta)"
 )
 
 declare -A APP_PKG_DEBIAN=(
@@ -1065,8 +924,6 @@ declare -A APP_CUSTOM_DEBIAN=(
     [librewolf]="install_librewolf_debian"
     [localsend]="install_localsend_debian"
     [retroarch]="install_retroarch_debian"
-    [ventoy]="install_ventoy_debian"
-    [tmog]="install_tmog_debian"
 )
 
 declare -A APP_CUSTOM_ARCH=(
@@ -1074,8 +931,6 @@ declare -A APP_CUSTOM_ARCH=(
     [librewolf]="install_librewolf_arch"
     [localsend]="install_localsend_arch"
     [retroarch]="install_retroarch_arch"
-    [ventoy]="install_ventoy_arch"
-    [tmog]="install_tmog_arch"
 )
 
 install_app_by_slug() {
@@ -1490,7 +1345,7 @@ install_lavat() {
     return 0
 }
 
-UTIL_ORDER=(cmatrix cava lavat peaclock fastfetch sl btop htop)
+UTIL_ORDER=(cmatrix cava lavat peaclock fastfetch sl pipes sptlrx btop htop)
 
 declare -A UTIL_NAME=(
     [cmatrix]="CMatrix"
@@ -1499,6 +1354,8 @@ declare -A UTIL_NAME=(
     [peaclock]="Peaclock"
     [fastfetch]="Fastfetch"
     [sl]="sl (Steam Locomotive)"
+    [pipes]="pipes.sh"
+    [sptlrx]="sptlrx (Spotify lyrics)"
     [btop]="btop"
     [htop]="htop"
 )
@@ -1535,6 +1392,28 @@ install_utility() {
             install_peaclock_debian
         else
             install_peaclock_arch
+        fi
+        return $?
+    fi
+
+    # pipes.sh and sptlrx have no official Arch repo package (AUR only),
+    # and pipes.sh's APT binary package is named differently (pipes-sh)
+    # from its AUR name (pipes.sh), so both get a small special case
+    # instead of living in the generic UTIL_APT/UTIL_PACMAN tables.
+    if [[ "$slug" == "pipes" ]]; then
+        if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+            install_apt_package "pipes-sh" "$name"
+        else
+            install_aur_package "pipes.sh" "$name"
+        fi
+        return $?
+    fi
+
+    if [[ "$slug" == "sptlrx" ]]; then
+        if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+            install_apt_package "sptlrx" "$name"
+        else
+            install_aur_package "sptlrx" "$name"
         fi
         return $?
     fi
@@ -1587,6 +1466,9 @@ show_utilities_page() {
 # ============================================================
 #                         BAZAAR
 # ============================================================
+# APT-only, Ubuntu-based only: the "bazaar" package currently
+# ships on Ubuntu 26.04+ (universe). No Flatpak fallback and no
+# Arch path on purpose.
 
 install_flatpak() {
     if command -v flatpak >/dev/null 2>&1; then
@@ -1619,79 +1501,35 @@ ensure_flathub() {
     return 1
 }
 
-install_bazaar_native() {
+install_bazaar() {
     if command -v bazaar >/dev/null 2>&1; then
         print_ok "Bazaar is already installed."
         return 0
     fi
 
-    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        ensure_apt_synced
-        apt_has_package "bazaar" || return 1
-
-        # Ubuntu 26.04+ ships a native APT package (universe) and Bazaar's
-        # own developers now recommend it over the Flatpak build on that
-        # release: recent Ubuntu tightened the sandboxing rules that
-        # Bazaar's Flatpak needs (the fusermount wrapper), which broke
-        # Flatpak installs from within it. Older Ubuntu/Debian/Mint don't
-        # have this package yet, so this simply falls through to Flatpak.
-        print_info "Using the native APT package (recommended by Bazaar upstream on this Ubuntu release)."
-        install_apt_package "bazaar" "Bazaar (App Store)"
-    else
-        pacman_has_package "bazaar" || return 1
-        install_pacman_package "bazaar" "Bazaar (App Store)"
-    fi
-}
-
-install_bazaar() {
-    if install_bazaar_native; then
-        return 0
-    fi
-
-    if ! install_flatpak; then
+    if [[ "$DISTRO_FAMILY" != "debian" ]]; then
+        print_err "Bazaar is only offered here through APT on Ubuntu-based systems."
         return 1
     fi
 
-    ensure_flathub || return 1
+    ensure_apt_synced
 
-    if flatpak info "$BAZAAR_FLATPAK_ID" >/dev/null 2>&1; then
-        print_ok "Bazaar is already installed."
-        return 0
+    if ! apt_has_package "bazaar"; then
+        print_err "The 'bazaar' APT package is not available on this system."
+        print_info "It currently ships on Ubuntu 26.04 and newer (universe)."
+        return 1
     fi
 
-    print_info "Installing Bazaar from Flathub..."
-
-    if flatpak install -y flathub "$BAZAAR_FLATPAK_ID"; then
-        print_ok "Bazaar installed."
-        return 0
-    fi
-
-    print_err "Could not install Bazaar."
-    return 1
+    install_apt_package "bazaar" "Bazaar (App Store)"
 }
 
 launch_bazaar() {
-    if command -v bazaar >/dev/null 2>&1; then
-        print_info "Launching Bazaar..."
-        bazaar >/dev/null 2>&1 &
-        return 0
-    fi
-
-    if ! command -v flatpak >/dev/null 2>&1; then
-        print_warn "Flatpak is not installed."
+    if ! command -v bazaar >/dev/null 2>&1; then
         install_bazaar || return 1
-    elif ! flatpak info "$BAZAAR_FLATPAK_ID" >/dev/null 2>&1; then
-        install_bazaar || return 1
-    fi
-
-    if command -v bazaar >/dev/null 2>&1; then
-        print_info "Launching Bazaar..."
-        bazaar >/dev/null 2>&1 &
-        return 0
     fi
 
     print_info "Launching Bazaar..."
-    flatpak run "$BAZAAR_FLATPAK_ID" >/dev/null 2>&1 &
+    bazaar >/dev/null 2>&1 &
 }
 
 # ============================================================
@@ -1843,6 +1681,7 @@ process_selection() {
                 ;;
             "$opt_categories")
                 show_categories_page
+                SKIP_MAIN_PAUSE=true
                 ;;
             "$opt_bazaar")
                 launch_bazaar || true
@@ -1961,7 +1800,12 @@ main() {
             return 0
         }
 
+        SKIP_MAIN_PAUSE=false
         process_selection "$input"
+
+        if [[ "$SKIP_MAIN_PAUSE" == true ]]; then
+            continue
+        fi
 
         echo
         read -r -p "Press Enter to return to the main menu..." _ || true
