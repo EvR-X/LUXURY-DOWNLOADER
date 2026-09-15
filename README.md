@@ -8,42 +8,40 @@
 ## Features
 
 - Detects your distro, family, and architecture
-- Includes Brave Origin, Thunderbird, LibreWolf, VLC, LibreOffice, MPV, ETC
+- Includes Brave Origin, Thunderbird, LibreWolf, VLC, LibreOffice, MPV, etc.
 - Installs GPU/CPU drivers and firmware
 - Sets up AUR helpers (Yay, Paru) on Arch
 - Adds terminal utilities: btop, htop, Fastfetch, and more
-- Opens Bazaar, a Flatpak app store
+- Installs Bazaar, an app store for your system
+- Lets you cleanly uninstall anything Luxury installed
 - Updates your system or itself
 
-The main screen is intentionally kept focused on the most commonly installed applications and the most important actions.
+The main menu stays short on purpose — everything else (apps, drivers,
+utilities, uninstalling) lives one level down, in its own page.
 
 Example:
 
 ```text
-╔══════════════════════════════════════════════════╗
-║                      LUXURY DOWNLOADER                    ║
-║                      (YOUR DISTRO NAME)                   ║
-╚══════════════════════════════════════════════════╝
+╭──────────────────────────────────────────────────╮
+│          ✦ Luxury Downloader  v2.5.0           │
+╰──────────────────────────────────────────────────╯
+Ubuntu 26.04 LTS · debian · x86_64
 
-  System:       Ubuntu 26.04 LTS
-  Family:       debian
-  Architecture: x86_64
+  [1] Apps
+  [2] Terminal Utilities
+  [3] Drivers & Firmware
+  [4] AUR Helpers
+  [5] Install Bazaar
+  [6] Update System
+  [7] Install ALL Apps
+  [8] Uninstall Apps
 
-  [1] Brave Origin
-  [2] Thunderbird
-  [3] LibreWolf
-  [4] VLC
-  [5] LibreOffice
-  [6] MPV
-
-  [7] Categories
-  [8] Bazaar (Flatpak App Store)
-  [9] Update System
-  [10] Install ALL Apps
-  [0] Exit
+  [Q] Exit
 ```
 
-The option numbers are generated automatically from the application's registry, so the menu stays synchronized with the actual application list.
+Numbers inside the Apps and Terminal Utilities pages come from the same
+registry the script installs from, so they always stay in sync with
+what's actually available.
 
 ## Install
 
