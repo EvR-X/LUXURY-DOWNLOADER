@@ -23,9 +23,9 @@ Example:
 
 ```text
 ╭──────────────────────────────────────────────────╮
-│          ✦ Luxury Downloader  v2.5.0                      │
+│              ✦ Luxury Downloader               │
 ╰──────────────────────────────────────────────────╯
-Ubuntu 26.04 LTS · debian · x86_64
+v2.5.0 · Ubuntu 26.04.1 LTS · debian · x86_64
 
   [1] Apps
   [2] Terminal Utilities
