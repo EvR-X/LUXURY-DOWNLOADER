@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.5.0"
+VERSION="2.5.1"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -89,9 +89,9 @@ repeat_char() {
 # print_header -> the one big title bar, shown only on the main menu.
 print_header() {
     local width=50
-    local label=" ✦ ${LUXURY_TITLE}  v${VERSION} "
+    local label=" ✦ ${LUXURY_TITLE} "
+    (( ${#label} + 2 > width )) && width=$(( ${#label} + 2 ))
     local pad=$(( width - ${#label} ))
-    (( pad < 2 )) && pad=2
     local left=$(( pad / 2 ))
     local right=$(( pad - left ))
 
@@ -103,9 +103,11 @@ print_header() {
     printf '%b╰%s╯%b\n' "$CYAN$BOLD" "$(repeat_char '─' "$width")" "$RESET"
 }
 
-# print_sysline -> the compact "distro · family · arch" info line.
+# print_sysline -> Luxury's own version plus the compact
+# "distro · family · arch" info, all on the one line below the header.
 print_sysline() {
-    printf '%b%s · %s · %s%b\n' "$DIM" "$DISTRO_NAME" "$DISTRO_FAMILY" "$(uname -m)" "$RESET"
+    printf '%bv%s · %s · %s · %s%b\n' \
+        "$DIM" "$VERSION" "$DISTRO_NAME" "$DISTRO_FAMILY" "$(uname -m)" "$RESET"
 }
 
 # box_top/box_bottom -> compact rounded section frame used by every
@@ -202,12 +204,21 @@ detect_distro() {
         return 1
     fi
 
-    # shellcheck disable=SC1091
-    source /etc/os-release
+    # /etc/os-release defines its own VERSION, NAME, ID... fields. Sourcing
+    # it directly into this script used to overwrite Luxury's own $VERSION
+    # with the distro's version string. Reading it inside a subshell keeps
+    # those fields fully isolated — only the three lines this prints ever
+    # reach the script.
+    local -a os_fields
+    mapfile -t os_fields < <(
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        printf '%s\n' "${ID:-}" "${ID_LIKE:-}" "${PRETTY_NAME:-${NAME:-Unknown Linux}}"
+    )
 
-    DISTRO_ID="${ID:-unknown}"
-    DISTRO_NAME="${PRETTY_NAME:-${NAME:-Unknown Linux}}"
-    local like="${ID_LIKE:-}"
+    DISTRO_ID="${os_fields[0]:-unknown}"
+    local like="${os_fields[1]:-}"
+    DISTRO_NAME="${os_fields[2]:-Unknown Linux}"
 
     case "$DISTRO_ID" in
         ubuntu|debian|linuxmint|pop|neon|zorin|elementary|lubuntu|kubuntu|xubuntu|ubuntu-mate|budgie-remix)
