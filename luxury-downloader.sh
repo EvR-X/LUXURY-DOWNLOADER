@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -38,10 +38,11 @@ DISTRO_NAME=""
 SUDO="sudo"
 APT_SYNCED=false
 AUR_HELPER=""
-# Set by process_selection when Categories was used, so main()'s loop
-# skips its own "Press Enter to return..." pause: the category pages
-# already pause after each individual action, so this avoids stacking
-# a second, redundant confirmation on top of those.
+# Set by process_selection when a sub-page (Apps, Terminal Utilities,
+# Drivers & Firmware, AUR Helpers, Uninstall Apps) was opened, so
+# main()'s loop skips its own "Press Enter to return..." pause: those
+# pages already pause after each individual action, so this avoids
+# stacking a second, redundant confirmation on top of those.
 SKIP_MAIN_PAUSE=false
 
 # ============================================================
@@ -85,31 +86,58 @@ repeat_char() {
     printf '%s' "${out// /$1}"
 }
 
-print_box() {
+# print_header -> the one big title bar, shown only on the main menu.
+print_header() {
     local width=50
-    local line pad_l pad_r
+    local label=" ✦ ${LUXURY_TITLE}  v${VERSION} "
+    local pad=$(( width - ${#label} ))
+    (( pad < 2 )) && pad=2
+    local left=$(( pad / 2 ))
+    local right=$(( pad - left ))
 
-    printf '%b╔%s╗%b\n' "$CYAN$BOLD" "$(repeat_char '═' "$width")" "$RESET"
-
-    for line in "$@"; do
-        pad_l=$(( (width - ${#line}) / 2 ))
-        pad_r=$(( width - ${#line} - pad_l ))
-        (( pad_l < 0 )) && pad_l=0
-        (( pad_r < 0 )) && pad_r=0
-
-        printf '%b║%b' "$CYAN$BOLD" "$RESET"
-        printf '%*s' "$pad_l" ''
-        printf '%b%s%b' "$BOLD" "$line" "$RESET"
-        printf '%*s' "$pad_r" ''
-        printf '%b║%b\n' "$CYAN$BOLD" "$RESET"
-    done
-
-    printf '%b╚%s╝%b\n' "$CYAN$BOLD" "$(repeat_char '═' "$width")" "$RESET"
+    printf '%b╭%s╮%b\n' "$CYAN$BOLD" "$(repeat_char '─' "$width")" "$RESET"
+    printf '%b│%b%*s%b%s%b%*s%b│%b\n' \
+        "$CYAN$BOLD" "$RESET" "$left" '' \
+        "$CYAN$BOLD" "$label" "$RESET" \
+        "$right" '' "$CYAN$BOLD" "$RESET"
+    printf '%b╰%s╯%b\n' "$CYAN$BOLD" "$(repeat_char '─' "$width")" "$RESET"
 }
 
+# print_sysline -> the compact "distro · family · arch" info line.
+print_sysline() {
+    printf '%b%s · %s · %s%b\n' "$DIM" "$DISTRO_NAME" "$DISTRO_FAMILY" "$(uname -m)" "$RESET"
+}
+
+# box_top/box_bottom -> compact rounded section frame used by every
+# inner page (Apps, Terminal Utilities, Drivers & Firmware, AUR
+# Helpers, Uninstall Apps). Width auto-adjusts to fit longer titles.
+box_top() {
+    local title="$1"
+    local width=42
+    local label=" ${title} "
+    (( ${#label} + 4 > width )) && width=$(( ${#label} + 4 ))
+    local pad=$(( width - ${#label} ))
+    local left=$(( pad / 2 ))
+    local right=$(( pad - left ))
+
+    printf '%b╭%s' "$CYAN" "$(repeat_char '─' "$left")"
+    printf '%b%s%b' "$BOLD$BLUE" "$label" "$RESET$CYAN"
+    printf '%s╮%b\n' "$(repeat_char '─' "$right")" "$RESET"
+}
+
+box_bottom() {
+    local title="$1"
+    local width=42
+    local label=" ${title} "
+    (( ${#label} + 4 > width )) && width=$(( ${#label} + 4 ))
+
+    printf '%b╰%s╯%b\n' "$CYAN" "$(repeat_char '─' "$width")" "$RESET"
+}
+
+# Lighter-weight heading for one-shot actions (Update System, Install
+# ALL) that aren't navigable pages, so they don't need a full box.
 section_title() {
-    echo
-    printf '%b=== %s ===%b\n\n' "$BOLD$BLUE" "$1" "$RESET"
+    printf '\n%b%s%b\n\n' "$BOLD$BLUE" "$1" "$RESET"
 }
 
 # ============================================================
@@ -324,7 +352,7 @@ install_aur_package() {
     local helper
     helper="$(detect_aur_helper)" || {
         print_err "No AUR helper is installed."
-        print_info "Open Categories -> AUR Helpers first."
+        print_info "Open AUR Helpers from the main menu first."
         return 1
     }
 
@@ -883,6 +911,92 @@ install_retroarch_arch() {
 }
 
 # ============================================================
+#              INSTALL TRACKING (for safe uninstalls)
+# ============================================================
+# A small persistent record of exactly what Luxury itself has
+# installed, so "Uninstall Apps" can never remove something the
+# user installed by other means. One line per entry, formatted
+# as "category:slug" (e.g. "app:vlc", "util:btop").
+
+INSTALL_RECORD_FILE="/var/lib/luxury-downloader/installed.list"
+
+record_install() {
+    local category="$1"
+    local slug="$2"
+    local entry="${category}:${slug}"
+
+    $SUDO mkdir -p "$(dirname "$INSTALL_RECORD_FILE")" 2>/dev/null || return 0
+
+    if [[ -f "$INSTALL_RECORD_FILE" ]] && grep -Fxq "$entry" "$INSTALL_RECORD_FILE" 2>/dev/null; then
+        return 0
+    fi
+
+    printf '%s\n' "$entry" | $SUDO tee -a "$INSTALL_RECORD_FILE" >/dev/null 2>&1
+}
+
+is_recorded() {
+    local category="$1"
+    local slug="$2"
+    [[ -f "$INSTALL_RECORD_FILE" ]] || return 1
+    grep -Fxq "${category}:${slug}" "$INSTALL_RECORD_FILE" 2>/dev/null
+}
+
+forget_install() {
+    local category="$1"
+    local slug="$2"
+    [[ -f "$INSTALL_RECORD_FILE" ]] || return 0
+
+    local tmp
+    tmp="$(mktemp)" || return 0
+    grep -Fxv "${category}:${slug}" "$INSTALL_RECORD_FILE" > "$tmp" 2>/dev/null
+    $SUDO cp "$tmp" "$INSTALL_RECORD_FILE" 2>/dev/null
+    rm -f "$tmp"
+}
+
+# ============================================================
+#                    REAL RUN COMMANDS
+# ============================================================
+# Used for the "Type [x] to run it" hint after a successful
+# install. Only entries Luxury actually knows for certain are
+# listed here; anything absent simply gets no hint (better to
+# say nothing than to invent a command that might be wrong).
+
+declare -A RUN_CMD=(
+    [brave]="brave-origin"
+    [thunderbird]="thunderbird"
+    [librewolf]="librewolf"
+    [vlc]="vlc"
+    [libreoffice]="libreoffice"
+    [mpv]="mpv"
+    [retroarch]="retroarch"
+    [7zip]="7zz"
+    [unrar]="unrar"
+    [bazaar]="bazaar"
+    [cmatrix]="cmatrix"
+    [cava]="cava"
+    [lavat]="lavat"
+    [peaclock]="peaclock"
+    [fastfetch]="fastfetch"
+    [sl]="sl"
+    [pipes]="pipes"
+    [sptlrx]="sptlrx"
+    [btop]="btop"
+    [htop]="htop"
+)
+
+# announce_installed <slug> -> the install functions already print
+# their own "✓ X installed." line via print_ok, so this only adds
+# the run-command hint right after it, avoiding a duplicate message.
+announce_installed() {
+    local slug="$1"
+    local cmd="${RUN_CMD[$slug]:-}"
+
+    if [[ -n "$cmd" ]]; then
+        print_info "Type [${cmd}] to run it."
+    fi
+}
+
+# ============================================================
 #                       MAIN APP REGISTRY
 # ============================================================
 
@@ -937,6 +1051,7 @@ install_app_by_slug() {
     local slug="$1"
     local name="${APP_NAME[$slug]:-$slug}"
     local custom_fn=""
+    local result
 
     if [[ "$DISTRO_FAMILY" == "debian" ]]; then
         custom_fn="${APP_CUSTOM_DEBIAN[$slug]:-}"
@@ -953,6 +1068,14 @@ install_app_by_slug() {
             install_pacman_package "${APP_PKG_ARCH[$slug]:-}" "$name"
         fi
     fi
+    result=$?
+
+    if [[ $result -eq 0 ]]; then
+        record_install "app" "$slug"
+        announce_installed "$slug"
+    fi
+
+    return "$result"
 }
 
 # ============================================================
@@ -1037,7 +1160,8 @@ install_aur_helper() {
 show_aur_helpers_page() {
     while true; do
         clear 2>/dev/null || true
-        print_box "AUR HELPERS"
+        echo
+        box_top "AUR HELPERS"
         echo
 
         local current="None"
@@ -1045,16 +1169,19 @@ show_aur_helpers_page() {
             current="$AUR_HELPER"
         fi
 
-        printf '  Current helper: %s\n\n' "$current"
+        printf '  Current helper: %b%s%b\n\n' "$CYAN" "$current" "$RESET"
         echo "  [1] Install / use Yay"
         echo "  [2] Install / use Paru"
-        echo "  [3] Back"
+        echo
+        printf '  %b[B]%b Back\n' "$CYAN" "$RESET"
+        echo
+        box_bottom "AUR HELPERS"
         echo
 
         local choice
-        read -r -p "Choose an option: " choice || choice=""
+        read -r -p "Select: " choice || choice=""
 
-        case "$choice" in
+        case "${choice,,}" in
             1)
                 install_aur_helper yay || true
                 press_enter
@@ -1063,7 +1190,7 @@ show_aur_helpers_page() {
                 install_aur_helper paru || true
                 press_enter
                 ;;
-            3)
+            b)
                 return 0
                 ;;
             *)
@@ -1198,7 +1325,8 @@ install_firmware_arch() {
 show_drivers_page() {
     while true; do
         clear 2>/dev/null || true
-        print_box "DRIVERS & FIRMWARE"
+        echo
+        box_top "DRIVERS & FIRMWARE"
         echo
 
         if [[ "$DISTRO_FAMILY" == "arch" ]]; then
@@ -1219,11 +1347,18 @@ show_drivers_page() {
             echo "  [6] Firmware"
         fi
 
-        echo "  [0] Back"
+        echo
+        printf '  %b[B]%b Back\n' "$CYAN" "$RESET"
+        echo
+        box_bottom "DRIVERS & FIRMWARE"
         echo
 
         local choice
-        read -r -p "Choose an option: " choice || choice=""
+        read -r -p "Select: " choice || choice=""
+
+        if [[ "${choice,,}" == "b" ]]; then
+            return 0
+        fi
 
         if [[ "$DISTRO_FAMILY" == "arch" ]]; then
             case "$choice" in
@@ -1235,7 +1370,6 @@ show_drivers_page() {
                 6) install_intel_gpu_arch || true; press_enter ;;
                 7) install_intel_cpu_arch || true; press_enter ;;
                 8) install_firmware_arch || true; press_enter ;;
-                0) return 0 ;;
                 *) print_warn "Invalid option." ;;
             esac
         else
@@ -1246,7 +1380,6 @@ show_drivers_page() {
                 4) install_intel_gpu_debian || true; press_enter ;;
                 5) install_intel_cpu_debian || true; press_enter ;;
                 6) install_firmware_debian || true; press_enter ;;
-                0) return 0 ;;
                 *) print_warn "Invalid option." ;;
             esac
         fi
@@ -1381,59 +1514,266 @@ declare -A UTIL_PACMAN=(
 install_utility() {
     local slug="$1"
     local name="${UTIL_NAME[$slug]:-$slug}"
+    local result
 
     if [[ "$slug" == "lavat" ]]; then
         install_lavat
-        return $?
-    fi
+        result=$?
 
-    if [[ "$slug" == "peaclock" ]]; then
+    elif [[ "$slug" == "peaclock" ]]; then
         if [[ "$DISTRO_FAMILY" == "debian" ]]; then
             install_peaclock_debian
         else
             install_peaclock_arch
         fi
-        return $?
-    fi
+        result=$?
 
     # pipes.sh and sptlrx have no official Arch repo package (AUR only),
     # and pipes.sh's APT binary package is named differently (pipes-sh)
     # from its AUR name (pipes.sh), so both get a small special case
     # instead of living in the generic UTIL_APT/UTIL_PACMAN tables.
-    if [[ "$slug" == "pipes" ]]; then
+    elif [[ "$slug" == "pipes" ]]; then
         if [[ "$DISTRO_FAMILY" == "debian" ]]; then
             install_apt_package "pipes-sh" "$name"
         else
             install_aur_package "pipes.sh" "$name"
         fi
-        return $?
-    fi
+        result=$?
 
-    if [[ "$slug" == "sptlrx" ]]; then
+    elif [[ "$slug" == "sptlrx" ]]; then
         if [[ "$DISTRO_FAMILY" == "debian" ]]; then
             install_apt_package "sptlrx" "$name"
         else
             install_aur_package "sptlrx" "$name"
         fi
-        return $?
-    fi
+        result=$?
 
-    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
         install_apt_package "${UTIL_APT[$slug]}" "$name"
+        result=$?
+
     else
         if pacman_has_package "${UTIL_PACMAN[$slug]}"; then
             install_pacman_package "${UTIL_PACMAN[$slug]}" "$name"
+            result=$?
         else
             print_err "Package not available in the configured Arch repositories: ${UTIL_PACMAN[$slug]}"
-            return 1
+            result=1
         fi
+    fi
+
+    if [[ $result -eq 0 ]]; then
+        record_install "util" "$slug"
+        announce_installed "$slug"
+    fi
+
+    return "$result"
+}
+
+# ============================================================
+#                    SAFE UNINSTALL SYSTEM
+# ============================================================
+# Only ever acts on entries in INSTALL_RECORD_FILE (things Luxury
+# itself installed) — see record_install() above. Never touches
+# software the user installed some other way.
+
+# resolve_uninstall_target <category> <slug> -> prints "method:target"
+# for the CURRENT distro family. method is one of: apt, pacman,
+# flatpak, path, unknown. "unknown" means there's no safe automated
+# way to remove it, and the caller must warn instead of acting.
+resolve_uninstall_target() {
+    local category="$1"
+    local slug="$2"
+
+    if [[ "$category" == "app" ]]; then
+        case "$slug" in
+            brave)
+                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                    printf 'apt:brave-origin'
+                else
+                    printf 'pacman:brave-origin-bin'
+                fi
+                return
+                ;;
+            librewolf)
+                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                    printf 'apt:librewolf'
+                else
+                    printf 'pacman:librewolf'
+                fi
+                return
+                ;;
+            localsend)
+                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                    printf 'flatpak:org.localsend.localsend_app'
+                else
+                    printf 'pacman:localsend-bin'
+                fi
+                return
+                ;;
+            retroarch)
+                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                    printf 'apt:retroarch'
+                else
+                    printf 'pacman:retroarch'
+                fi
+                return
+                ;;
+        esac
+
+        if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+            local pkg="${APP_PKG_DEBIAN[$slug]:-}"
+            [[ -n "$pkg" ]] && printf 'apt:%s' "$pkg" || printf 'unknown:'
+        else
+            local pkg="${APP_PKG_ARCH[$slug]:-}"
+            [[ -n "$pkg" ]] && printf 'pacman:%s' "$pkg" || printf 'unknown:'
+        fi
+        return
+    fi
+
+    # category == util
+    case "$slug" in
+        lavat)
+            if [[ "$DISTRO_FAMILY" == "arch" ]]; then
+                printf 'pacman:lavat'
+            else
+                # Built from source with "make install"; no package
+                # manager tracks it. Removing the resolved binary path
+                # is as far as this can safely go.
+                printf 'path:lavat'
+            fi
+            return
+            ;;
+        peaclock)
+            if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                printf 'path:peaclock'
+            else
+                printf 'pacman:peaclock'
+            fi
+            return
+            ;;
+        pipes)
+            if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                printf 'apt:pipes-sh'
+            else
+                printf 'pacman:pipes.sh'
+            fi
+            return
+            ;;
+        sptlrx)
+            if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                printf 'apt:sptlrx'
+            else
+                printf 'pacman:sptlrx'
+            fi
+            return
+            ;;
+    esac
+
+    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+        local pkg="${UTIL_APT[$slug]:-}"
+        [[ -n "$pkg" ]] && printf 'apt:%s' "$pkg" || printf 'unknown:'
+    else
+        local pkg="${UTIL_PACMAN[$slug]:-}"
+        [[ -n "$pkg" ]] && printf 'pacman:%s' "$pkg" || printf 'unknown:'
+    fi
+}
+
+# is_target_present <method> <target> -> is it actually installed
+# right now, regardless of what the tracking file says?
+is_target_present() {
+    local method="$1"
+    local target="$2"
+
+    case "$method" in
+        apt|pacman) is_installed "$target" ;;
+        flatpak)    command -v flatpak >/dev/null 2>&1 && flatpak info "$target" >/dev/null 2>&1 ;;
+        path)       command -v "$target" >/dev/null 2>&1 ;;
+        *)          return 1 ;;
+    esac
+}
+
+# perform_uninstall <method> <target> -> does the actual removal.
+perform_uninstall() {
+    local method="$1"
+    local target="$2"
+
+    case "$method" in
+        apt)
+            check_sudo || return 1
+            $SUDO apt remove -y "$target"
+            ;;
+        pacman)
+            check_sudo || return 1
+            $SUDO pacman -R --noconfirm "$target"
+            ;;
+        flatpak)
+            command -v flatpak >/dev/null 2>&1 || return 1
+            flatpak uninstall -y "$target"
+            ;;
+        path)
+            local resolved
+            resolved="$(command -v "$target" 2>/dev/null)"
+            [[ -n "$resolved" ]] || return 1
+            check_sudo || return 1
+            $SUDO rm -f "$resolved"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# uninstall_entry <category> <slug> -> the full safe flow: was it
+# Luxury that installed this, is it still there, then remove it.
+uninstall_entry() {
+    local category="$1"
+    local slug="$2"
+    local name
+
+    if [[ "$category" == "app" ]]; then
+        name="${APP_NAME[$slug]:-$slug}"
+    else
+        name="${UTIL_NAME[$slug]:-$slug}"
+    fi
+
+    if ! is_recorded "$category" "$slug"; then
+        print_warn "${name} wasn't installed with Luxury, or wasn't found."
+        return 0
+    fi
+
+    local method_target method target
+    method_target="$(resolve_uninstall_target "$category" "$slug")"
+    method="${method_target%%:*}"
+    target="${method_target#*:}"
+
+    if [[ "$method" == "unknown" || -z "$target" ]]; then
+        print_warn "Not enough information to safely remove ${name}. Please remove it manually."
+        return 1
+    fi
+
+    if ! is_target_present "$method" "$target"; then
+        print_warn "${name} was already removed."
+        forget_install "$category" "$slug"
+        return 0
+    fi
+
+    print_info "Removing ${name}..."
+
+    if perform_uninstall "$method" "$target"; then
+        print_ok "${name} was uninstalled."
+        forget_install "$category" "$slug"
+    else
+        print_err "Could not uninstall ${name}."
+        return 1
     fi
 }
 
 show_utilities_page() {
     while true; do
         clear 2>/dev/null || true
-        print_box "TERMINAL UTILITIES"
+        echo
+        box_top "TERMINAL UTILITIES"
         echo
 
         local i=1
@@ -1443,13 +1783,16 @@ show_utilities_page() {
             ((i++))
         done
 
-        echo "  [0] Back"
+        echo
+        printf '  %b[B]%b Back\n' "$CYAN" "$RESET"
+        echo
+        box_bottom "TERMINAL UTILITIES"
         echo
 
         local choice
-        read -r -p "Choose an option: " choice || choice=""
+        read -r -p "Select: " choice || choice=""
 
-        if [[ "$choice" == "0" ]]; then
+        if [[ "${choice,,}" == "b" ]]; then
             return 0
         fi
 
@@ -1504,6 +1847,7 @@ ensure_flathub() {
 install_bazaar() {
     if command -v bazaar >/dev/null 2>&1; then
         print_ok "Bazaar is already installed."
+        ensure_bazaar_runtime
         return 0
     fi
 
@@ -1520,16 +1864,30 @@ install_bazaar() {
         return 1
     fi
 
-    install_apt_package "bazaar" "Bazaar (App Store)"
-}
-
-launch_bazaar() {
-    if ! command -v bazaar >/dev/null 2>&1; then
-        install_bazaar || return 1
+    if ! install_apt_package "bazaar" "Bazaar"; then
+        return 1
     fi
 
-    print_info "Launching Bazaar..."
-    bazaar >/dev/null 2>&1 &
+    ensure_bazaar_runtime
+    record_install "app" "bazaar"
+    announce_installed "bazaar"
+}
+
+# Bazaar's entire purpose is browsing/installing apps from Flathub, so
+# even though the app itself is installed via APT here, it still
+# needs Flatpak plus the Flathub remote configured to actually work.
+ensure_bazaar_runtime() {
+    if ! install_flatpak; then
+        print_warn "Flatpak could not be set up automatically; Bazaar needs it to browse apps."
+        return 1
+    fi
+
+    if ! ensure_flathub; then
+        print_warn "The Flathub remote could not be added automatically."
+        return 1
+    fi
+
+    print_ok "Flathub is ready."
 }
 
 # ============================================================
@@ -1597,75 +1955,157 @@ install_all() {
 #                       MENUS / PAGES
 # ============================================================
 
-show_categories_page() {
+show_apps_page() {
     while true; do
         clear 2>/dev/null || true
-        print_box "CATEGORIES"
         echo
-        echo "  [1] AUR Helpers"
-        echo "  [2] Drivers & Firmware"
-        echo "  [3] Terminal Utilities"
-        echo "  [0] Back"
+        box_top "APPS"
         echo
 
-        local choice
-        read -r -p "Choose a category: " choice || choice=""
+        local i=1
+        local slug
+        for slug in "${APP_ORDER[@]}"; do
+            printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]}"
+            ((i++))
+        done
 
-        case "$choice" in
-            1) show_aur_helpers_page ;;
-            2) show_drivers_page ;;
-            3) show_utilities_page ;;
-            0) return 0 ;;
-            *) print_warn "Invalid option." ;;
-        esac
+        echo
+        printf '  %b[B]%b Back\n' "$CYAN" "$RESET"
+        echo
+        box_bottom "APPS"
+        echo
+
+        local input
+        read -r -p "Select one or more (e.g: 1,3,5): " input || return
+
+        if [[ "${input,,}" == "b" ]]; then
+            return
+        fi
+
+        input="${input//;/,}"
+        local -a items
+        IFS=',' read -r -a items <<< "$input"
+
+        local item any=false
+        for item in "${items[@]}"; do
+            item="${item//[[:space:]]/}"
+            [[ -z "$item" ]] && continue
+            any=true
+
+            if [[ "${item,,}" == "b" ]]; then
+                return
+            elif slug="$(app_slug_by_number "$item" 2>/dev/null)"; then
+                install_app_by_slug "$slug" || true
+            else
+                print_err "Invalid option: $item"
+            fi
+            echo
+        done
+
+        if [[ "$any" == false ]]; then
+            print_warn "No option was entered."
+        fi
+
+        echo
+        read -r -p "Press Enter to continue..." _
+    done
+}
+
+show_uninstall_page() {
+    local n_apps=${#APP_ORDER[@]}
+    local n_utils=${#UTIL_ORDER[@]}
+
+    while true; do
+        clear 2>/dev/null || true
+        echo
+        box_top "UNINSTALL APPS"
+        echo
+
+        printf '  %bAPPS%b\n' "$BOLD$BLUE" "$RESET"
+        local i=1
+        local slug
+        for slug in "${APP_ORDER[@]}"; do
+            printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]}"
+            ((i++))
+        done
+
+        echo
+        printf '  %bTERMINAL UTILITIES%b\n' "$BOLD$BLUE" "$RESET"
+        for slug in "${UTIL_ORDER[@]}"; do
+            printf '  [%d] %s\n' "$i" "${UTIL_NAME[$slug]}"
+            ((i++))
+        done
+
+        echo
+        printf '  %b[B]%b Back\n' "$CYAN" "$RESET"
+        echo
+        box_bottom "UNINSTALL APPS"
+        echo
+
+        local input
+        read -r -p "Select one or more to uninstall: " input || return
+
+        if [[ "${input,,}" == "b" ]]; then
+            return
+        fi
+
+        input="${input//;/,}"
+        local -a items
+        IFS=',' read -r -a items <<< "$input"
+
+        local item any=false
+        for item in "${items[@]}"; do
+            item="${item//[[:space:]]/}"
+            [[ -z "$item" ]] && continue
+            any=true
+
+            if [[ "${item,,}" == "b" ]]; then
+                return
+            fi
+
+            if [[ "$item" =~ ^[0-9]+$ ]] && (( item >= 1 && item <= n_apps )); then
+                uninstall_entry "app" "${APP_ORDER[$((item - 1))]}"
+            elif [[ "$item" =~ ^[0-9]+$ ]] && (( item > n_apps && item <= n_apps + n_utils )); then
+                uninstall_entry "util" "${UTIL_ORDER[$((item - 1 - n_apps))]}"
+            else
+                print_err "Invalid option: $item"
+            fi
+            echo
+        done
+
+        if [[ "$any" == false ]]; then
+            print_warn "No option was entered."
+        fi
+
+        echo
+        read -r -p "Press Enter to continue..." _
     done
 }
 
 show_main_menu() {
     clear 2>/dev/null || true
     echo
-
-    print_box "$LUXURY_TITLE" "v${VERSION}"
+    print_header
+    print_sysline
     echo
 
-    printf '  %bSystem:%b       %s\n' "$BOLD" "$RESET" "$DISTRO_NAME"
-    printf '  %bFamily:%b       %s\n' "$BOLD" "$RESET" "$DISTRO_FAMILY"
-    printf '  %bArchitecture:%b %s\n\n' "$BOLD" "$RESET" "$(uname -m)"
-
-    local i=1
-    local slug
-
-    for slug in "${APP_ORDER[@]}"; do
-        printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]}"
-        ((i++))
-    done
-
-    local n=${#APP_ORDER[@]}
-    local opt_categories=$((n + 1))
-    local opt_bazaar=$((n + 2))
-    local opt_update=$((n + 3))
-    local opt_all=$((n + 4))
-
+    echo "  [1] Apps"
+    echo "  [2] Terminal Utilities"
+    echo "  [3] Drivers & Firmware"
+    echo "  [4] AUR Helpers"
+    printf '  [5] %bInstall Bazaar%b\n' "$CYAN" "$RESET"
+    printf '  [6] %bUpdate System%b\n' "$YELLOW" "$RESET"
+    printf '  [7] %bInstall ALL Apps%b\n' "$GREEN" "$RESET"
+    echo "  [8] Uninstall Apps"
     echo
-    printf '  [%d] Categories\n' "$opt_categories"
-    printf '  [%d] Bazaar (App Store)\n' "$opt_bazaar"
-    printf '  [%d] Update System\n' "$opt_update"
-    printf '  [%d] Install ALL Apps\n' "$opt_all"
-    echo "  [0] Exit"
+    printf '  %b[Q] Exit%b\n' "$RED" "$RESET"
     echo
 }
 
 process_selection() {
     local input="$1"
     local item
-    local slug
     local -a items
-
-    local n=${#APP_ORDER[@]}
-    local opt_categories=$((n + 1))
-    local opt_bazaar=$((n + 2))
-    local opt_update=$((n + 3))
-    local opt_all=$((n + 4))
 
     input="${input//;/,}"
     IFS=',' read -r -a items <<< "$input"
@@ -1674,30 +2114,44 @@ process_selection() {
         item="${item//[[:space:]]/}"
         [[ -z "$item" ]] && continue
 
-        case "$item" in
-            0)
+        case "${item,,}" in
+            q)
                 print_info "Goodbye."
+                sleep 1
+                clear 2>/dev/null || true
                 exit 0
                 ;;
-            "$opt_categories")
-                show_categories_page
+            1)
+                show_apps_page
                 SKIP_MAIN_PAUSE=true
                 ;;
-            "$opt_bazaar")
-                launch_bazaar || true
+            2)
+                show_utilities_page
+                SKIP_MAIN_PAUSE=true
                 ;;
-            "$opt_update")
+            3)
+                show_drivers_page
+                SKIP_MAIN_PAUSE=true
+                ;;
+            4)
+                show_aur_helpers_page
+                SKIP_MAIN_PAUSE=true
+                ;;
+            5)
+                install_bazaar || true
+                ;;
+            6)
                 update_system || true
                 ;;
-            "$opt_all")
+            7)
                 install_all || true
                 ;;
+            8)
+                show_uninstall_page
+                SKIP_MAIN_PAUSE=true
+                ;;
             *)
-                if slug="$(app_slug_by_number "$item" 2>/dev/null)"; then
-                    install_app_by_slug "$slug" || true
-                else
-                    print_err "Invalid option: $item"
-                fi
+                print_err "Invalid option: $item"
                 ;;
         esac
 
@@ -1795,7 +2249,7 @@ main() {
         show_main_menu
 
         local input
-        read -r -p "Choose one or more options (example: 1,3,5): " input || {
+        read -r -p "Select: " input || {
             echo
             return 0
         }
