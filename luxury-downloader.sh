@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.5.1"
+VERSION="2.5.2"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
