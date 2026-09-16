@@ -35,6 +35,11 @@ UPDATE_URL="https://raw.githubusercontent.com/${REPO}/main/luxury-downloader.sh"
 DISTRO_FAMILY=""
 DISTRO_ID=""
 DISTRO_NAME=""
+# Real distro label for display only (e.g. "Lubuntu (Racoon)"), built
+# from /etc/os-release's own NAME + VERSION_CODENAME. Kept separate
+# from DISTRO_NAME (PRETTY_NAME, used elsewhere) so nothing that
+# already reads DISTRO_NAME changes behavior.
+DISTRO_REAL_LABEL=""
 SUDO="sudo"
 APT_SYNCED=false
 AUR_HELPER=""
@@ -105,9 +110,17 @@ print_header() {
 
 # print_sysline -> Luxury's own version plus the compact
 # "distro · family · arch" info, all on the one line below the header.
+# Ends with the real distro name/codename in brackets (e.g.
+# "[Lubuntu (Racoon)]") when detect_distro has populated it.
 print_sysline() {
-    printf '%bv%s · %s · %s · %s%b\n' \
-        "$DIM" "$VERSION" "$DISTRO_NAME" "$DISTRO_FAMILY" "$(uname -m)" "$RESET"
+    printf '%bv%s · %s · %s · %s' \
+        "$DIM" "$VERSION" "$DISTRO_NAME" "$DISTRO_FAMILY" "$(uname -m)"
+
+    if [[ -n "$DISTRO_REAL_LABEL" ]]; then
+        printf ' [%s]' "$DISTRO_REAL_LABEL"
+    fi
+
+    printf '%b\n' "$RESET"
 }
 
 # box_top/box_bottom -> compact rounded section frame used by every
@@ -207,18 +220,35 @@ detect_distro() {
     # /etc/os-release defines its own VERSION, NAME, ID... fields. Sourcing
     # it directly into this script used to overwrite Luxury's own $VERSION
     # with the distro's version string. Reading it inside a subshell keeps
-    # those fields fully isolated — only the three lines this prints ever
+    # those fields fully isolated — only the lines this prints ever
     # reach the script.
     local -a os_fields
     mapfile -t os_fields < <(
         # shellcheck disable=SC1091
         . /etc/os-release
-        printf '%s\n' "${ID:-}" "${ID_LIKE:-}" "${PRETTY_NAME:-${NAME:-Unknown Linux}}"
+        printf '%s\n' "${ID:-}" "${ID_LIKE:-}" "${PRETTY_NAME:-${NAME:-Unknown Linux}}" \
+            "${NAME:-}" "${VERSION_CODENAME:-}"
     )
 
     DISTRO_ID="${os_fields[0]:-unknown}"
     local like="${os_fields[1]:-}"
     DISTRO_NAME="${os_fields[2]:-Unknown Linux}"
+
+    # Real distro label for display: "NAME (Codename)" when a codename
+    # is present (e.g. "Lubuntu (Racoon)"), otherwise just NAME. Falls
+    # back to DISTRO_NAME (PRETTY_NAME) if the plain NAME field is
+    # missing, so this is never left empty. VERSION_CODENAME is always
+    # lowercase by os-release convention (e.g. "racoon"), so its first
+    # letter is capitalized here to match the desired display format.
+    local real_name="${os_fields[3]:-}"
+    local codename="${os_fields[4]:-}"
+    [[ -z "$real_name" ]] && real_name="$DISTRO_NAME"
+    if [[ -n "$codename" ]]; then
+        codename="${codename^}"
+        DISTRO_REAL_LABEL="${real_name} (${codename})"
+    else
+        DISTRO_REAL_LABEL="$real_name"
+    fi
 
     case "$DISTRO_ID" in
         ubuntu|debian|linuxmint|pop|neon|zorin|elementary|lubuntu|kubuntu|xubuntu|ubuntu-mate|budgie-remix)
@@ -967,22 +997,22 @@ forget_install() {
 # ============================================================
 #                    REAL RUN COMMANDS
 # ============================================================
-# Used for the "Type [x] to run it" hint after a successful
-# install. Only entries Luxury actually knows for certain are
-# listed here; anything absent simply gets no hint (better to
-# say nothing than to invent a command that might be wrong).
+# Two separate hints after a successful install. Only entries
+# Luxury actually knows for certain are listed; anything absent
+# simply gets no hint (better to say nothing than to invent a
+# command that might be wrong).
+#
+# RUN_CMD -> "Type [x] to run it." Terminal utilities that are
+# launched by typing their own command (cmatrix, btop, etc).
+# Confirmed apps with their own launcher icon (Brave, Thunderbird,
+# LibreWolf, VLC, LibreOffice, MPV, LocalSend, RetroArch, Bazaar)
+# are opened from the system's app menu, so they intentionally
+# have no entry here.
+#
+# HELP_CMD -> "Run it with: [x]" for terminal-only apps that don't
+# get opened directly, just invoked with arguments (7-Zip, unrar).
 
 declare -A RUN_CMD=(
-    [brave]="brave-origin"
-    [thunderbird]="thunderbird"
-    [librewolf]="librewolf"
-    [vlc]="vlc"
-    [libreoffice]="libreoffice"
-    [mpv]="mpv"
-    [retroarch]="retroarch"
-    [7zip]="7zz"
-    [unrar]="unrar"
-    [bazaar]="bazaar"
     [cmatrix]="cmatrix"
     [cava]="cava"
     [lavat]="lavat"
@@ -995,16 +1025,34 @@ declare -A RUN_CMD=(
     [htop]="htop"
 )
 
-# announce_installed <slug> -> the install functions already print
-# their own "✓ X installed." line via print_ok, so this only adds
-# the run-command hint right after it, avoiding a duplicate message.
-announce_installed() {
-    local slug="$1"
-    local cmd="${RUN_CMD[$slug]:-}"
+declare -A HELP_CMD=(
+    [7zip]="7zz --help"
+    [unrar]="unrar"
+)
 
-    if [[ -n "$cmd" ]]; then
-        print_info "Type [${cmd}] to run it."
+# announce_installed <category> <slug> -> the install functions
+# already print their own "✓ X installed." line via print_ok, so
+# this only adds a hint right after it, avoiding a duplicate
+# message. category is "app" or "util" (the same value already
+# passed to record_install right before this is called).
+#
+# - Terminal utilities (category "util") get the RUN_CMD hint.
+# - Apps (category "app") only get a hint if they're a
+#   terminal-only tool with no launcher icon (HELP_CMD); apps with
+#   a real launcher icon get no hint at all, since they're opened
+#   from the system's app menu, not by typing a command.
+announce_installed() {
+    local category="$1"
+    local slug="$2"
+
+    if [[ "$category" == "util" ]]; then
+        local cmd="${RUN_CMD[$slug]:-}"
+        [[ -n "$cmd" ]] && print_info "Type [${cmd}] to run it."
+        return 0
     fi
+
+    local help_cmd="${HELP_CMD[$slug]:-}"
+    [[ -n "$help_cmd" ]] && print_info "Run it with: ${help_cmd}"
 }
 
 # ============================================================
@@ -1083,7 +1131,7 @@ install_app_by_slug() {
 
     if [[ $result -eq 0 ]]; then
         record_install "app" "$slug"
-        announce_installed "$slug"
+        announce_installed "app" "$slug"
     fi
 
     return "$result"
@@ -1575,7 +1623,7 @@ install_utility() {
 
     if [[ $result -eq 0 ]]; then
         record_install "util" "$slug"
-        announce_installed "$slug"
+        announce_installed "util" "$slug"
     fi
 
     return "$result"
@@ -1881,7 +1929,7 @@ install_bazaar() {
 
     ensure_bazaar_runtime
     record_install "app" "bazaar"
-    announce_installed "bazaar"
+    announce_installed "app" "bazaar"
 }
 
 # Bazaar's entire purpose is browsing/installing apps from Flathub, so
