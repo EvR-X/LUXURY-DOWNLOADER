@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.5.2"
+VERSION="2.5.3"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -1019,14 +1019,14 @@ declare -A RUN_CMD=(
     [peaclock]="peaclock"
     [fastfetch]="fastfetch"
     [sl]="sl"
-    [pipes]="pipes"
+    [pipes]="pipes.sh"
     [sptlrx]="sptlrx"
     [btop]="btop"
     [htop]="htop"
 )
 
 declare -A HELP_CMD=(
-    [7zip]="7zz --help"
+    [7zip]="7z --help"
     [unrar]="unrar"
 )
 
@@ -1072,6 +1072,7 @@ declare -A APP_NAME=(
     [retroarch]="RetroArch + Cores"
     [7zip]="7-Zip"
     [unrar]="unrar (RAR extractor)"
+    [bazaar]="Bazaar"
 )
 
 declare -A APP_PKG_DEBIAN=(
@@ -1678,6 +1679,18 @@ resolve_uninstall_target() {
                 fi
                 return
                 ;;
+            bazaar)
+                # Bazaar is only offered here through APT on Ubuntu-based
+                # systems (see install_bazaar); it has no Arch package.
+                # Uninstalling it removes only the bazaar package itself,
+                # never the shared Flatpak/Flathub runtime it depends on.
+                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                    printf 'apt:bazaar'
+                else
+                    printf 'unknown:'
+                fi
+                return
+                ;;
         esac
 
         if [[ "$DISTRO_FAMILY" == "debian" ]]; then
@@ -2073,6 +2086,12 @@ show_apps_page() {
 show_uninstall_page() {
     local n_apps=${#APP_ORDER[@]}
     local n_utils=${#UTIL_ORDER[@]}
+    # Bazaar has its own dedicated install button (not part of APP_ORDER,
+    # see install_bazaar), but it can still be uninstalled here. It gets
+    # the number right after the terminal utilities, so the existing
+    # "app" (1..n_apps) and "util" (n_apps+1..n_apps+n_utils) ranges
+    # below stay untouched.
+    local bazaar_index=$((n_apps + n_utils + 1))
 
     while true; do
         clear 2>/dev/null || true
@@ -2087,9 +2106,11 @@ show_uninstall_page() {
             printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]}"
             ((i++))
         done
+        printf '  [%d] %s\n' "$bazaar_index" "${APP_NAME[bazaar]}"
 
         echo
         printf '  %bTERMINAL UTILITIES%b\n' "$BOLD$BLUE" "$RESET"
+        i=$((n_apps + 1))
         for slug in "${UTIL_ORDER[@]}"; do
             printf '  [%d] %s\n' "$i" "${UTIL_NAME[$slug]}"
             ((i++))
@@ -2126,6 +2147,8 @@ show_uninstall_page() {
                 uninstall_entry "app" "${APP_ORDER[$((item - 1))]}"
             elif [[ "$item" =~ ^[0-9]+$ ]] && (( item > n_apps && item <= n_apps + n_utils )); then
                 uninstall_entry "util" "${UTIL_ORDER[$((item - 1 - n_apps))]}"
+            elif [[ "$item" =~ ^[0-9]+$ ]] && (( item == bazaar_index )); then
+                uninstall_entry "app" "bazaar"
             else
                 print_err "Invalid option: $item"
             fi
