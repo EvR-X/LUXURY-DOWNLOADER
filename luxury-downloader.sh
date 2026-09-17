@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+ #!/usr/bin/env bash
 
 # ============================================================
 #                       LUXURY DOWNLOADER
@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.5.3"
+VERSION="2.5.4"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -1609,15 +1609,15 @@ install_utility() {
         result=$?
 
     elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        install_apt_package "${UTIL_APT[$slug]}" "$name"
+        install_apt_package "${UTIL_APT[$slug]:-}" "$name"
         result=$?
 
     else
-        if pacman_has_package "${UTIL_PACMAN[$slug]}"; then
-            install_pacman_package "${UTIL_PACMAN[$slug]}" "$name"
+        if pacman_has_package "${UTIL_PACMAN[$slug]:-}"; then
+            install_pacman_package "${UTIL_PACMAN[$slug]:-}" "$name"
             result=$?
         else
-            print_err "Package not available in the configured Arch repositories: ${UTIL_PACMAN[$slug]}"
+            print_err "Package not available in the configured Arch repositories: ${UTIL_PACMAN[$slug]:-$slug}"
             result=1
         fi
     fi
@@ -1851,7 +1851,7 @@ show_utilities_page() {
         local i=1
         local slug
         for slug in "${UTIL_ORDER[@]}"; do
-            printf '  [%d] %s\n' "$i" "${UTIL_NAME[$slug]}"
+            printf '  [%d] %s\n' "$i" "${UTIL_NAME[$slug]:-$slug}"
             ((i++))
         done
 
@@ -2037,7 +2037,7 @@ show_apps_page() {
         local i=1
         local slug
         for slug in "${APP_ORDER[@]}"; do
-            printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]}"
+            printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]:-$slug}"
             ((i++))
         done
 
@@ -2103,16 +2103,16 @@ show_uninstall_page() {
         local i=1
         local slug
         for slug in "${APP_ORDER[@]}"; do
-            printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]}"
+            printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]:-$slug}"
             ((i++))
         done
-        printf '  [%d] %s\n' "$bazaar_index" "${APP_NAME[bazaar]}"
+        printf '  [%d] %s\n' "$bazaar_index" "${APP_NAME[bazaar]:-Bazaar}"
 
         echo
         printf '  %bTERMINAL UTILITIES%b\n' "$BOLD$BLUE" "$RESET"
         i=$((n_apps + 1))
         for slug in "${UTIL_ORDER[@]}"; do
-            printf '  [%d] %s\n' "$i" "${UTIL_NAME[$slug]}"
+            printf '  [%d] %s\n' "$i" "${UTIL_NAME[$slug]:-$slug}"
             ((i++))
         done
 
