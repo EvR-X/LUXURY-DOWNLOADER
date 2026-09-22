@@ -26,7 +26,7 @@ The main menu stays intentionally short. Apps, utilities, drivers, AUR helpers, 
 ╭──────────────────────────────────────────────────╮
 │              ✦ Luxury Downloader                 │
 ╰──────────────────────────────────────────────────╯
-2.6.0 · Ubuntu 26.04.1 LTS · debian · x86_64
+X.Y.Z · Ubuntu 26.04.1 LTS · debian · x86_64
 
   [1] Apps
   [2] Terminal Utilities
