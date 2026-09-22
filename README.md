@@ -1,4 +1,4 @@
-#Luxury Downloader
+Luxury Downloader
 
 ""License" (https://img.shields.io/github/license/EvR-X/LUXURY-DOWNLOADER?style=flat-square)" (https://github.com/EvR-X/LUXURY-DOWNLOADER/blob/main/LICENSE)
 ""Version" (https://img.shields.io/badge/version-2.6.0-blue?style=flat-square)" (https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
