@@ -1,31 +1,31 @@
-# Luxury Downloader
+#Luxury Downloader
 
-[![License](https://img.shields.io/github/license/EvR-X/LUXURY-DOWNLOADER?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/blob/main/LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/EvR-X/LUXURY-DOWNLOADER?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/commits/main)
+""License" (https://img.shields.io/github/license/EvR-X/LUXURY-DOWNLOADER?style=flat-square)" (https://github.com/EvR-X/LUXURY-DOWNLOADER/blob/main/LICENSE)
+""Version" (https://img.shields.io/badge/version-2.6.0-blue?style=flat-square)" (https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
 
-> A CLI that installs apps, drivers, and utilities on Debian/Ubuntu and Arch Linux from a single menu.
+«A CLI that installs apps, drivers, and terminal utilities on Debian/Ubuntu and Arch Linux from a single menu.»
 
-## Features
+Features
 
-- Detects your distro, family, and architecture
-- Includes Brave Origin, Thunderbird, LibreWolf, VLC, LibreOffice, MPV, etc.
+- Detects distribution, family, and architecture
+- Installs apps such as Brave Origin, Thunderbird, LibreWolf, VLC, LibreOffice, MPV, RetroArch, and more
 - Installs GPU/CPU drivers and firmware
-- Sets up AUR helpers (Yay, Paru) on Arch
-- Adds terminal utilities: btop, htop, Fastfetch, and more
-- Installs Bazaar, an app store for your system
-- Lets you cleanly uninstall anything Luxury installed
-- Updates your system or itself
+- Supports NVIDIA Open, DKMS, and legacy drivers on Arch
+- Sets up AUR helpers such as Yay and Paru
+- Includes terminal utilities like btop, htop, Fastfetch, Cava, and more
+- Installs and configures Bazaar on supported Ubuntu systems
+- Safely tracks and uninstalls software installed by Luxury
+- Supports tracked source builds with rollback and cleanup
+- Updates the system or Luxury Downloader itself
 
-The main menu stays short on purpose — everything else (apps, drivers,
-utilities, uninstalling) lives one level down, in its own page.
+The main menu stays intentionally short. Apps, utilities, drivers, AUR helpers, and uninstall options are organized into separate pages.
 
-Example:
+Example
 
-```text
 ╭──────────────────────────────────────────────────╮
-│              ✦ Luxury Downloader                          │
+│              ✦ Luxury Downloader                 │
 ╰──────────────────────────────────────────────────╯
-v2.5.0 · Ubuntu 26.04.1 LTS · debian · x86_64
+X.Y.Z · Ubuntu 26.04.1 LTS · debian · x86_64
 
   [1] Apps
   [2] Terminal Utilities
@@ -33,27 +33,20 @@ v2.5.0 · Ubuntu 26.04.1 LTS · debian · x86_64
   [4] AUR Helpers
   [5] Install Bazaar
   [6] Update System
-  [7] Install ALL Apps
-  [8] Uninstall Apps
+  [7] Uninstall [Apps/Utilities]
 
   [Q] Exit
-```
 
-Numbers inside the Apps and Terminal Utilities pages come from the same
-registry the script installs from, so they always stay in sync with
-what's actually available.
+App and utility menus use the same internal registries as the installer, keeping the available options synchronized with the software Luxury actually supports.
 
-## Install
+Install
 
-```sh
- curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
-```
+curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
 
-## Usage
+Usage
 
-```sh
-$ luxury            # open the menu
-$ luxury update     # update Luxury
-$ luxury uninstall  # remove Luxury
-$ luxury --version  # show version
-```
+luxury            # open the menu
+luxury update     # update Luxury
+luxury uninstall  # remove Luxury
+luxury --version  # show version
+luxury --help     # show help
