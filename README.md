@@ -1,11 +1,11 @@
-Luxury Downloader
+# Luxury Downloader
 
-""License" (https://img.shields.io/github/license/EvR-X/LUXURY-DOWNLOADER?style=flat-square)" (https://github.com/EvR-X/LUXURY-DOWNLOADER/blob/main/LICENSE)
-""Version" (https://img.shields.io/badge/version-2.6.0-blue?style=flat-square)" (https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
+[![License](https://img.shields.io/github/license/EvR-X/LUXURY-DOWNLOADER?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/blob/main/LICENSE)
+[![Version](https://img.shields.io/badge/version-2.6.0-blue?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
 
-«A CLI that installs apps, drivers, and terminal utilities on Debian/Ubuntu and Arch Linux from a single menu.»
+> A CLI that installs apps, drivers, and terminal utilities on Debian/Ubuntu and Arch Linux from a single menu.
 
-Features
+## Features
 
 - Detects distribution, family, and architecture
 - Installs apps such as Brave Origin, Thunderbird, LibreWolf, VLC, LibreOffice, MPV, RetroArch, and more
@@ -20,12 +20,13 @@ Features
 
 The main menu stays intentionally short. Apps, utilities, drivers, AUR helpers, and uninstall options are organized into separate pages.
 
-Example
+## Example
 
+```text
 ╭──────────────────────────────────────────────────╮
 │              ✦ Luxury Downloader                 │
 ╰──────────────────────────────────────────────────╯
-X.Y.Z · Ubuntu 26.04.1 LTS · debian · x86_64
+2.6.0 · Ubuntu 26.04.1 LTS · debian · x86_64
 
   [1] Apps
   [2] Terminal Utilities
@@ -36,17 +37,22 @@ X.Y.Z · Ubuntu 26.04.1 LTS · debian · x86_64
   [7] Uninstall [Apps/Utilities]
 
   [Q] Exit
+```
 
 App and utility menus use the same internal registries as the installer, keeping the available options synchronized with the software Luxury actually supports.
 
-Install
+## Install
 
+```sh
 curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
+```
 
-Usage
+## Usage
 
+```sh
 luxury            # open the menu
 luxury update     # update Luxury
 luxury uninstall  # remove Luxury
 luxury --version  # show version
 luxury --help     # show help
+```
