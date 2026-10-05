@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.6.0"
+VERSION="2.6.1"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -169,8 +169,8 @@ box_bottom() {
     printf '%b╰%s╯%b\n' "$CYAN" "$(repeat_char '─' "$width")" "$RESET"
 }
 
-# Lighter-weight heading for one-shot actions (Update System, Install
-# ALL) that aren't navigable pages, so they don't need a full box.
+# Lighter-weight heading for one-shot actions (Update System) that
+# aren't navigable pages, so they don't need a full box.
 section_title() {
     printf '\n%b%s%b\n\n' "$BOLD$BLUE" "$1" "$RESET"
 }
@@ -315,8 +315,77 @@ detect_distro() {
 #                       PACKAGE HELPERS
 # ============================================================
 
+# ------------------------------------------------------------
+# Install snapshot (menu marks only)
+#
+# Drawing a page used to ask the system about every row on its own
+# (dpkg-query + grep, pacman, snap list... dozens of processes per
+# redraw). take_install_snapshot reads the installed packages (and,
+# when asked, the installed snaps) ONCE, and while it is active
+# is_installed / snap_is_installed answer from that copy.
+#
+# Only the [✓]/[X] marks of the pages use it, and drop_install_snapshot
+# runs right after they are drawn, so installs, uninstalls and every
+# other decision still ask the system directly and never see stale data.
+# ------------------------------------------------------------
+SNAPSHOT_ACTIVE=false
+SNAPSHOT_SNAPS_READY=false
+declare -A SNAPSHOT_PKGS=()
+declare -A SNAPSHOT_SNAPS=()
+
+# take_install_snapshot [snaps] -> "snaps" also reads the installed snaps
+# (only the pages that list apps need them).
+take_install_snapshot() {
+    local with_snaps="${1:-}"
+    local name
+    local -a names=()
+
+    drop_install_snapshot
+
+    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+        # Same rule as is_installed: only "install ok installed" counts.
+        mapfile -t names < <(dpkg-query -W -f='${Package} ${Status}\n' 2>/dev/null \
+            | sed -n 's/ install ok installed$//p')
+    else
+        mapfile -t names < <(pacman -Qq 2>/dev/null)
+    fi
+
+    for name in "${names[@]}"; do
+        [[ -n "$name" ]] && SNAPSHOT_PKGS["$name"]=1
+    done
+
+    # An empty list means the query itself failed: keep asking the
+    # system directly rather than showing everything as missing.
+    (( ${#SNAPSHOT_PKGS[@]} > 0 )) || return 0
+
+    SNAPSHOT_ACTIVE=true
+
+    if [[ "$with_snaps" == "snaps" ]]; then
+        names=()
+        if command -v snap >/dev/null 2>&1; then
+            mapfile -t names < <(snap list 2>/dev/null | awk 'NR > 1 { print $1 }')
+        fi
+        for name in "${names[@]}"; do
+            [[ -n "$name" ]] && SNAPSHOT_SNAPS["$name"]=1
+        done
+        SNAPSHOT_SNAPS_READY=true
+    fi
+}
+
+drop_install_snapshot() {
+    SNAPSHOT_ACTIVE=false
+    SNAPSHOT_SNAPS_READY=false
+    SNAPSHOT_PKGS=()
+    SNAPSHOT_SNAPS=()
+}
+
 is_installed() {
     local package="$1"
+
+    if [[ "$SNAPSHOT_ACTIVE" == true ]]; then
+        [[ -n "$package" && -n "${SNAPSHOT_PKGS[$package]:-}" ]]
+        return
+    fi
 
     if [[ "$DISTRO_FAMILY" == "debian" ]]; then
         dpkg-query -W -f='${Status}' "$package" 2>/dev/null \
@@ -324,6 +393,19 @@ is_installed() {
     else
         pacman -Q "$package" >/dev/null 2>&1
     fi
+}
+
+# snap_is_installed <name> -> is that snap installed? Answers from the
+# snapshot while one that includes snaps is active; otherwise asks snap.
+snap_is_installed() {
+    local name="$1"
+
+    if [[ "$SNAPSHOT_SNAPS_READY" == true ]]; then
+        [[ -n "$name" && -n "${SNAPSHOT_SNAPS[$name]:-}" ]]
+        return
+    fi
+
+    command -v snap >/dev/null 2>&1 && snap list "$name" >/dev/null 2>&1
 }
 
 apt_has_package() {
@@ -964,7 +1046,7 @@ apt_candidate_is_snap_shim() {
 # installed right now. When there is none it prints the Snap, which is
 # what a fresh install uses on Ubuntu and is reported as absent.
 thunderbird_target_debian() {
-    if command -v snap >/dev/null 2>&1 && snap list thunderbird >/dev/null 2>&1; then
+    if snap_is_installed thunderbird; then
         printf 'snap:thunderbird'
     elif is_installed thunderbird && ! deb_is_snap_shim thunderbird; then
         printf 'apt:thunderbird'
@@ -1527,11 +1609,11 @@ migrate_install_records() {
 }
 
 # was_already_present <category> <slug> -> is this software on the
-# system right now? Only used for the ✓ marks in the menus and by the
-# migration above; it is never used to decide what to uninstall. Reuses
-# resolve_default_target/is_target_present (defined later, in the SAFE
-# UNINSTALL SYSTEM section -- fine in bash, since nothing here runs until
-# main() is reached at the bottom of the script).
+# system right now? Used for the ✓/X marks in the menus and to word one
+# message in uninstall_entry; it is never used to decide what to
+# uninstall. Reuses resolve_default_target/is_target_present (defined
+# later, in the SAFE UNINSTALL SYSTEM section -- fine in bash, since
+# nothing here runs until main() is reached at the bottom of the script).
 was_already_present() {
     local category="$1"
     local slug="$2"
@@ -2974,864 +3056,4 @@ install_utility() {
     # pipes.sh, sptlrx and tty-clock have no official Arch repo package
     # (AUR only), and pipes.sh's APT binary package is named differently
     # (pipes-sh) from its AUR name (pipes.sh), so these get a small
-    # special case instead of living in the generic UTIL_APT/UTIL_PACMAN
-    # tables.
-    elif [[ "$slug" == "pipes" ]]; then
-        if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-            install_tracked_apt "pipes-sh" "$name" || result=$?
-        else
-            install_tracked_aur "pipes.sh" "$name" || result=$?
-        fi
-
-    elif [[ "$slug" == "sptlrx" ]]; then
-        if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-            install_tracked_apt "sptlrx" "$name" || result=$?
-        else
-            install_tracked_aur "sptlrx" "$name" || result=$?
-        fi
-
-    elif [[ "$slug" == "tty-clock" ]]; then
-        if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-            install_tracked_apt "tty-clock" "$name" || result=$?
-        else
-            install_tracked_aur "tty-clock" "$name" || result=$?
-        fi
-
-    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        install_tracked_apt "${UTIL_APT[$slug]:-}" "$name" || result=$?
-
-    else
-        pkg="${UTIL_PACMAN[$slug]:-}"
-        if pacman_has_package "$pkg"; then
-            install_tracked_pacman "$pkg" "$name" || result=$?
-        else
-            print_err "Package not available in the configured Arch repositories: ${pkg:-$slug}"
-            result=1
-        fi
-    fi
-
-    finalize_install "util" "$slug" "$result" "$name"
-}
-
-# ============================================================
-#                    SAFE UNINSTALL SYSTEM
-# ============================================================
-# Only ever acts on entries in INSTALL_RECORD_FILE (things Luxury
-# itself installed) -- see record_install() above -- and only with
-# the exact method and target that were recorded when it installed
-# them. Never touches software the user installed some other way.
-
-# resolve_default_target <category> <slug> -> prints "method:target" for
-# where this software normally lives on the CURRENT distro family. It is
-# only used to draw the menus' ✓ marks and by migrate_install_records();
-# it is NEVER used to decide what to uninstall, because the state of the
-# system can change between an install and an uninstall. method is one
-# of: apt, pacman, flatpak, snap, command (any program of that name on
-# PATH), unknown.
-resolve_default_target() {
-    local category="$1"
-    local slug="$2"
-
-    if [[ "$category" == "app" ]]; then
-        case "$slug" in
-            brave)
-                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'apt:brave-origin'
-                else
-                    printf 'pacman:brave-origin-bin'
-                fi
-                return
-                ;;
-            librewolf)
-                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'apt:librewolf'
-                else
-                    printf 'pacman:librewolf'
-                fi
-                return
-                ;;
-            localsend)
-                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'flatpak:org.localsend.localsend_app'
-                else
-                    printf 'pacman:localsend-bin'
-                fi
-                return
-                ;;
-            retroarch)
-                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'apt:retroarch'
-                else
-                    printf 'pacman:retroarch'
-                fi
-                return
-                ;;
-            bazaar)
-                # Bazaar is only offered here through APT on Ubuntu-based
-                # systems (see install_bazaar); it has no Arch package.
-                # Uninstalling it removes only the bazaar package itself,
-                # never the shared Flatpak/Flathub runtime it depends on.
-                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'apt:bazaar'
-                else
-                    printf 'unknown:'
-                fi
-                return
-                ;;
-            thunderbird)
-                # See the THUNDERBIRD section: on Ubuntu the APT package
-                # is only a shim for the Snap.
-                if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    thunderbird_target_debian
-                else
-                    printf 'pacman:thunderbird'
-                fi
-                return
-                ;;
-        esac
-
-        if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-            local pkg="${APP_PKG_DEBIAN[$slug]:-}"
-            [[ -n "$pkg" ]] && printf 'apt:%s' "$pkg" || printf 'unknown:'
-        else
-            local pkg="${APP_PKG_ARCH[$slug]:-}"
-            [[ -n "$pkg" ]] && printf 'pacman:%s' "$pkg" || printf 'unknown:'
-        fi
-        return
-    fi
-
-    # category == util
-    case "$slug" in
-        lavat)
-            # Always built from source with "make install" on every
-            # distro family -- see install_lavat.
-            printf 'command:lavat'
-            return
-            ;;
-        peaclock)
-            if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                printf 'command:peaclock'
-            else
-                printf 'pacman:peaclock'
-            fi
-            return
-            ;;
-        pipes)
-            if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                printf 'apt:pipes-sh'
-            else
-                printf 'pacman:pipes.sh'
-            fi
-            return
-            ;;
-        sptlrx)
-            if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                printf 'apt:sptlrx'
-            else
-                printf 'pacman:sptlrx'
-            fi
-            return
-            ;;
-        tty-clock)
-            if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                printf 'apt:tty-clock'
-            else
-                printf 'pacman:tty-clock'
-            fi
-            return
-            ;;
-    esac
-
-    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        local pkg="${UTIL_APT[$slug]:-}"
-        [[ -n "$pkg" ]] && printf 'apt:%s' "$pkg" || printf 'unknown:'
-    else
-        local pkg="${UTIL_PACMAN[$slug]:-}"
-        [[ -n "$pkg" ]] && printf 'pacman:%s' "$pkg" || printf 'unknown:'
-    fi
-}
-
-# present_targets_from_list <comma-separated packages> -> prints, one per
-# line, the ones from the list that are currently installed. A plain
-# single package (no comma) works the same as before: either one line
-# or none. Used so a multi-package record (RetroArch + its cores) can be
-# checked and uninstalled package by package instead of as one string.
-present_targets_from_list() {
-    local list="$1" pkg
-    local -a pkgs
-    IFS=',' read -r -a pkgs <<< "$list"
-    for pkg in "${pkgs[@]}"; do
-        [[ -n "$pkg" ]] || continue
-        is_installed "$pkg" && printf '%s\n' "$pkg"
-    done
-}
-
-# any_of_list_installed <comma-separated packages> -> true if at least
-# one package in the list is currently installed.
-any_of_list_installed() {
-    [[ -n "$(present_targets_from_list "$1")" ]]
-}
-
-# is_target_present <method> <target> -> is it actually installed
-# right now, regardless of what the tracking file says?
-is_target_present() {
-    local method="$1"
-    local target="$2"
-
-    case "$method" in
-        apt|pacman) any_of_list_installed "$target" ;;
-        flatpak)    command -v flatpak >/dev/null 2>&1 && flatpak info "$target" >/dev/null 2>&1 ;;
-        snap)       command -v snap >/dev/null 2>&1 && snap list "$target" >/dev/null 2>&1 ;;
-        path)       [[ -e "$target" || -L "$target" ]] ;;
-        compiled)   [[ -s "${COMPILED_RECORD_DIR}/${target}.list" ]] ;;
-        command)    command -v "$target" >/dev/null 2>&1 ;;
-        *)          return 1 ;;
-    esac
-}
-
-# path_is_package_owned <absolute path> -> does dpkg / pacman own it?
-path_is_package_owned() {
-    local path="$1"
-
-    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        dpkg -S "$path" >/dev/null 2>&1
-    else
-        pacman -Qo "$path" >/dev/null 2>&1
-    fi
-}
-
-# uninstall_path_target <absolute path> -> removes one file that an
-# installer script put in /usr/local, and only that: never a path outside
-# /usr/local, and never a file a package manager has claimed since.
-uninstall_path_target() {
-    local target="$1"
-
-    if ! compiled_path_is_safe "$target"; then
-        print_err "Refusing to remove a path outside ${COMPILED_ALLOWED_PREFIX}: ${target}"
-        return 1
-    fi
-
-    if path_is_package_owned "$target"; then
-        print_err "${target} now belongs to an installed package; not removing it."
-        return 1
-    fi
-
-    check_sudo || return 1
-    $SUDO rm -f -- "$target"
-}
-
-# perform_uninstall <method> <target> -> does the actual removal.
-perform_uninstall() {
-    local method="$1"
-    local target="$2"
-
-    case "$method" in
-        apt)
-            check_sudo || return 1
-            # target may be several comma-separated packages (RetroArch +
-            # its cores); only ask apt to remove the ones still present,
-            # since asking it to remove even one missing package fails
-            # the whole command and leaves the rest untouched.
-            local -a present=()
-            mapfile -t present < <(present_targets_from_list "$target")
-            (( ${#present[@]} > 0 )) || return 0
-            $SUDO apt remove -y "${present[@]}"
-            ;;
-        pacman)
-            check_sudo || return 1
-            local -a present=()
-            mapfile -t present < <(present_targets_from_list "$target")
-            (( ${#present[@]} > 0 )) || return 0
-            $SUDO pacman -R --noconfirm "${present[@]}"
-            ;;
-        flatpak)
-            command -v flatpak >/dev/null 2>&1 || return 1
-            flatpak uninstall -y "$target"
-            ;;
-        snap)
-            command -v snap >/dev/null 2>&1 || return 1
-            check_sudo || return 1
-            $SUDO snap remove "$target"
-            ;;
-        path)
-            uninstall_path_target "$target"
-            ;;
-        compiled)
-            # target is the slug here (e.g. "lavat"): removes exactly the
-            # files its manifest lists -- see uninstall_compiled.
-            uninstall_compiled "$target"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-# uninstall_entry <category> <slug> -> the full safe flow: was it
-# Luxury that installed this, with what method, is it still there,
-# then remove exactly that.
-uninstall_entry() {
-    local category="$1"
-    local slug="$2"
-    local name
-
-    if [[ "$category" == "app" ]]; then
-        name="${APP_NAME[$slug]:-$slug}"
-    else
-        name="${UTIL_NAME[$slug]:-$slug}"
-    fi
-
-    local record method target
-    if ! record="$(get_record "$category" "$slug")"; then
-        print_warn "${name} wasn't installed with Luxury, or wasn't found."
-        return 0
-    fi
-
-    method="${record%%|*}"
-    target="${record#*|}"
-
-    case "$method" in
-        apt|pacman|flatpak|snap|path|compiled)
-            ;;
-        legacy)
-            print_warn "The install record for ${name} is in an old format. Restart Luxury so it can be upgraded, then try again."
-            return 1
-            ;;
-        *)
-            print_warn "Not enough information to safely remove ${name}. Please remove it manually."
-            return 1
-            ;;
-    esac
-
-    if [[ -z "$target" ]] || ! record_target_is_safe "$method" "$target"; then
-        print_warn "Not enough information to safely remove ${name}. Please remove it manually."
-        return 1
-    fi
-
-    if ! is_target_present "$method" "$target"; then
-        print_warn "${name} was already removed."
-        forget_install "$category" "$slug"
-        return 0
-    fi
-
-    print_info "Removing ${name}..."
-
-    if perform_uninstall "$method" "$target"; then
-        print_ok "${name} was uninstalled."
-        forget_install "$category" "$slug"
-    else
-        print_err "Could not uninstall ${name}."
-        return 1
-    fi
-}
-
-show_utilities_page() {
-    while true; do
-        clear 2>/dev/null || true
-        echo
-        box_top "TERMINAL UTILITIES"
-        echo
-
-        local i=1
-        local slug mark
-        for slug in "${UTIL_ORDER[@]}"; do
-            if was_already_present "util" "$slug"; then
-                mark="${GREEN}✓${RESET}"
-            else
-                mark=" "
-            fi
-            printf '  [%d] [%b] %s\n' "$i" "$mark" "${UTIL_NAME[$slug]:-$slug}"
-            ((i++))
-        done
-
-        echo
-        printf '  %b[B]%b Back\n' "$CYAN" "$RESET"
-        echo
-        box_bottom "TERMINAL UTILITIES"
-        echo
-
-        local choice
-        read -r -p "Select: " choice || return 0
-
-        if [[ "${choice,,}" == "b" ]]; then
-            return 0
-        fi
-
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#UTIL_ORDER[@]} )); then
-            local selected="${UTIL_ORDER[$((choice - 1))]}"
-            install_utility "$selected" || true
-            press_enter
-        else
-            print_warn "Invalid option."
-        fi
-    done
-}
-
-# ============================================================
-#                         BAZAAR
-# ============================================================
-# APT-only, Ubuntu-based only: the "bazaar" package currently
-# ships on Ubuntu 26.04+ (universe). No Flatpak fallback and no
-# Arch path on purpose.
-
-install_flatpak() {
-    if command -v flatpak >/dev/null 2>&1; then
-        return 0
-    fi
-
-    print_info "Flatpak is not installed. Installing it..."
-
-    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        install_apt_package "flatpak" "Flatpak"
-    else
-        install_pacman_package "flatpak" "Flatpak"
-    fi
-}
-
-ensure_flathub() {
-    command -v flatpak >/dev/null 2>&1 || return 1
-
-    if flatpak remote-list --columns=name 2>/dev/null | grep -Fxq "flathub"; then
-        return 0
-    fi
-
-    print_info "Adding the official Flathub remote..."
-
-    if flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo; then
-        return 0
-    fi
-
-    print_err "Could not add Flathub."
-    return 1
-}
-
-install_bazaar() {
-    reset_install_result
-
-    if is_installed "bazaar" || command -v bazaar >/dev/null 2>&1; then
-        if ! ensure_bazaar_runtime; then
-            print_err "Bazaar is installed, but its Flatpak/Flathub runtime is not ready."
-            return 1
-        fi
-        print_ok "Bazaar is already installed."
-        return 0
-    fi
-
-    if [[ "$DISTRO_FAMILY" != "debian" ]]; then
-        print_err "Bazaar is only offered here through APT on Ubuntu-based systems."
-        return 1
-    fi
-
-    ensure_apt_synced || return 1
-
-    if ! apt_has_package "bazaar"; then
-        print_err "The 'bazaar' APT package is not available on this system."
-        print_info "It currently ships on Ubuntu 26.04 and newer (universe)."
-        return 1
-    fi
-
-    if ! install_tracked_apt "bazaar" "Bazaar"; then
-        return 1
-    fi
-
-    # Bazaar itself is on the system from here on, so it gets recorded
-    # even if the runtime setup below fails.
-    if ! ensure_bazaar_runtime; then
-        finalize_install "app" "bazaar" 1 "Bazaar" || true
-        print_err "Bazaar was installed, but its Flatpak/Flathub runtime could not be set up, so it cannot browse apps yet."
-        print_info "Fix the problem above and run Install Bazaar again."
-        return 1
-    fi
-
-    finalize_install "app" "bazaar" 0 "Bazaar"
-}
-
-# Bazaar's entire purpose is browsing/installing apps from Flathub, so
-# even though the app itself is installed via APT here, it still
-# needs Flatpak plus the Flathub remote configured to actually work.
-ensure_bazaar_runtime() {
-    if ! install_flatpak; then
-        print_warn "Flatpak could not be set up automatically; Bazaar needs it to browse apps."
-        return 1
-    fi
-
-    if ! ensure_flathub; then
-        print_warn "The Flathub remote could not be added automatically."
-        return 1
-    fi
-
-    print_ok "Flathub is ready."
-}
-
-# ============================================================
-#                    SYSTEM UPDATE
-# ============================================================
-
-update_system() {
-    section_title "SYSTEM UPDATE"
-    check_sudo || return 1
-
-    if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        apt_update || return 1
-
-        if $SUDO apt upgrade -y; then
-            print_ok "System updated."
-            return 0
-        fi
-
-        print_err "System update finished with errors."
-        return 1
-    fi
-
-    # Always synchronize and upgrade together on Arch.
-    if $SUDO pacman -Syu --noconfirm; then
-        print_ok "System updated."
-        return 0
-    fi
-
-    print_err "System update finished with errors."
-    return 1
-}
-
-# ============================================================
-#                       MENUS / PAGES
-# ============================================================
-
-show_apps_page() {
-    while true; do
-        clear 2>/dev/null || true
-        echo
-        box_top "APPS"
-        echo
-
-        local i=1
-        local slug mark
-        for slug in "${APP_ORDER[@]}"; do
-            if was_already_present "app" "$slug"; then
-                mark="${GREEN}✓${RESET}"
-            else
-                mark=" "
-            fi
-            printf '  [%d] [%b] %s\n' "$i" "$mark" "${APP_NAME[$slug]:-$slug}"
-            ((i++))
-        done
-
-        echo
-        printf '  %b[B]%b Back\n' "$CYAN" "$RESET"
-        echo
-        box_bottom "APPS"
-        echo
-
-        local input
-        read -r -p "Select one or more (e.g: 1,3,5): " input || return
-
-        if [[ "${input,,}" == "b" ]]; then
-            return
-        fi
-
-        input="${input//;/,}"
-        local -a items
-        IFS=',' read -r -a items <<< "$input"
-
-        local item any=false
-        for item in "${items[@]}"; do
-            item="${item//[[:space:]]/}"
-            [[ -z "$item" ]] && continue
-            any=true
-
-            if [[ "${item,,}" == "b" ]]; then
-                return
-            elif slug="$(app_slug_by_number "$item" 2>/dev/null)"; then
-                install_app_by_slug "$slug" || true
-            else
-                print_err "Invalid option: $item"
-            fi
-            echo
-        done
-
-        if [[ "$any" == false ]]; then
-            print_warn "No option was entered."
-        fi
-
-        echo
-        read -r -p "Press Enter to continue..." _
-    done
-}
-
-show_uninstall_page() {
-    local n_apps=${#APP_ORDER[@]}
-    local n_utils=${#UTIL_ORDER[@]}
-    # Bazaar has its own dedicated install button (not part of APP_ORDER,
-    # see install_bazaar), but it can still be uninstalled here. It gets
-    # the number right after Terminal Utilities, so the existing "app"
-    # (1..n_apps) and "util" (n_apps+1..n_apps+n_utils) ranges below
-    # stay untouched.
-    local bazaar_index=$((n_apps + n_utils + 1))
-
-    while true; do
-        clear 2>/dev/null || true
-        echo
-        box_top "UNINSTALL [APPS/UTILITIES]"
-        echo
-
-        printf '  %bAPPS%b\n' "$BOLD$BLUE" "$RESET"
-        local i=1
-        local slug
-        for slug in "${APP_ORDER[@]}"; do
-            printf '  [%d] %s\n' "$i" "${APP_NAME[$slug]:-$slug}"
-            ((i++))
-        done
-        printf '  [%d] %s\n' "$bazaar_index" "${APP_NAME[bazaar]:-Bazaar}"
-
-        echo
-        printf '  %bTERMINAL UTILITIES%b\n' "$BOLD$BLUE" "$RESET"
-        i=$((n_apps + 1))
-        for slug in "${UTIL_ORDER[@]}"; do
-            printf '  [%d] %s\n' "$i" "${UTIL_NAME[$slug]:-$slug}"
-            ((i++))
-        done
-
-        echo
-        printf '  %b[B]%b Back\n' "$CYAN" "$RESET"
-        echo
-        box_bottom "UNINSTALL [APPS/UTILITIES]"
-        echo
-
-        local input
-        read -r -p "Select one or more to uninstall: " input || return
-
-        if [[ "${input,,}" == "b" ]]; then
-            return
-        fi
-
-        input="${input//;/,}"
-        local -a items
-        IFS=',' read -r -a items <<< "$input"
-
-        local item any=false
-        for item in "${items[@]}"; do
-            item="${item//[[:space:]]/}"
-            [[ -z "$item" ]] && continue
-            any=true
-
-            if [[ "${item,,}" == "b" ]]; then
-                return
-            fi
-
-            if [[ "$item" =~ ^[0-9]+$ ]] && (( item >= 1 && item <= n_apps )); then
-                uninstall_entry "app" "${APP_ORDER[$((item - 1))]}"
-            elif [[ "$item" =~ ^[0-9]+$ ]] && (( item > n_apps && item <= n_apps + n_utils )); then
-                uninstall_entry "util" "${UTIL_ORDER[$((item - 1 - n_apps))]}"
-            elif [[ "$item" =~ ^[0-9]+$ ]] && (( item == bazaar_index )); then
-                uninstall_entry "app" "bazaar"
-            else
-                print_err "Invalid option: $item"
-            fi
-            echo
-        done
-
-        if [[ "$any" == false ]]; then
-            print_warn "No option was entered."
-        fi
-
-        echo
-        read -r -p "Press Enter to continue..." _
-    done
-}
-
-show_main_menu() {
-    clear 2>/dev/null || true
-    echo
-    print_header
-    print_sysline
-    echo
-
-    echo "  [1] Apps"
-    echo "  [2] Terminal Utilities"
-    echo "  [3] Drivers & Firmware"
-    echo "  [4] AUR Helpers"
-    printf '  [5] %bInstall Bazaar%b\n' "$CYAN" "$RESET"
-    printf '  [6] %bUpdate System%b\n' "$YELLOW" "$RESET"
-    echo "  [7] Uninstall [Apps/Utilities]"
-    echo
-    printf '  %b[Q] Exit%b\n' "$RED" "$RESET"
-    echo
-}
-
-process_selection() {
-    local input="$1"
-    local item
-    local -a items
-
-    input="${input//;/,}"
-    IFS=',' read -r -a items <<< "$input"
-
-    for item in "${items[@]}"; do
-        item="${item//[[:space:]]/}"
-        [[ -z "$item" ]] && continue
-
-        case "${item,,}" in
-            q)
-                print_info "Goodbye."
-                sleep 1
-                clear 2>/dev/null || true
-                exit 0
-                ;;
-            1)
-                show_apps_page
-                SKIP_MAIN_PAUSE=true
-                ;;
-            2)
-                show_utilities_page
-                SKIP_MAIN_PAUSE=true
-                ;;
-            3)
-                show_drivers_page
-                SKIP_MAIN_PAUSE=true
-                ;;
-            4)
-                show_aur_helpers_page
-                SKIP_MAIN_PAUSE=true
-                ;;
-            5)
-                install_bazaar || true
-                ;;
-            6)
-                update_system || true
-                ;;
-            7)
-                show_uninstall_page
-                SKIP_MAIN_PAUSE=true
-                ;;
-            *)
-                print_err "Invalid option: $item"
-                ;;
-        esac
-
-        echo
-    done
-}
-
-app_slug_by_number() {
-    local n="$1"
-    local idx
-
-    [[ "$n" =~ ^[0-9]+$ ]] || return 1
-    idx=$((n - 1))
-
-    if (( idx < 0 || idx >= ${#APP_ORDER[@]} )); then
-        return 1
-    fi
-
-    printf '%s' "${APP_ORDER[$idx]}"
-}
-
-# ============================================================
-#                           HELP
-# ============================================================
-
-show_help() {
-    cat <<EOF
-${LUXURY_TITLE} v${VERSION}
-
-Usage:
-  luxury                  Open the interactive menu
-  luxury update          Update the installed Luxury command
-  luxury uninstall       Remove Luxury Downloader
-  luxury --version       Show version
-  luxury --help          Show this help
-
-First-time installation:
-  curl -fsSL ${UPDATE_URL} | bash
-EOF
-}
-
-# ============================================================
-#                           MAIN
-# ============================================================
-
-main() {
-    local command="${1:-menu}"
-
-    case "$command" in
-        --help|-h|help)
-            show_help
-            return 0
-            ;;
-        --version|-v|version)
-            printf '%s v%s\n' "$LUXURY_TITLE" "$VERSION"
-            return 0
-            ;;
-        uninstall|remove)
-            uninstall_self
-            return $?
-            ;;
-        update)
-            update_self
-            return $?
-            ;;
-        menu|"")
-            ;;
-        *)
-            print_err "Unknown command: $command"
-            show_help
-            return 2
-            ;;
-    esac
-
-    # The only way to install Luxury is the official first-time setup
-    # command (curl | bash). Once installed, plain `luxury` opens the UI.
-    if [[ ! -f "$INSTALL_PATH" ]]; then
-        bootstrap_install || return $?
-        return 0
-    fi
-
-    # From here on Luxury can be interrupted in the middle of an install
-    # (Ctrl-C, closed terminal): whatever is half done -- copied files,
-    # build-only dependencies, temp directories -- is cleaned up on the way out.
-    trap cleanup_on_exit EXIT
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    trap 'exit 129' HUP
-
-    # Always check for a Luxury Downloader update first.
-    # Only after this check do we detect the system and open the menu.
-    check_for_updates
-
-    require_command bash || return 1
-    require_command uname || return 1
-    require_command grep || return 1
-    require_command sed || return 1
-
-    detect_distro || return 1
-    check_architecture || return 1
-
-    # Upgrades install records written by older versions (one-time).
-    migrate_install_records
-
-    while true; do
-        show_main_menu
-
-        local input
-        read -r -p "Select: " input || {
-            echo
-            return 0
-        }
-
-        SKIP_MAIN_PAUSE=false
-        process_selection "$input"
-
-        if [[ "$SKIP_MAIN_PAUSE" == true ]]; then
-            continue
-        fi
-
-        echo
-        read -r -p "Press Enter to return to the main menu..." _ || true
-    done
-}
-
-if (return 0 2>/dev/null); then
-    : # Sourced: do not start the interactive menu.
-else
-    main "$@"
-fi
+    # special case instead of living in the generic UTIL_APT
