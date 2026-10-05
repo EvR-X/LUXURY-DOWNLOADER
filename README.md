@@ -1,7 +1,7 @@
 # Luxury Downloader
 
 [![License](https://img.shields.io/github/license/EvR-X/LUXURY-DOWNLOADER?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/blob/main/LICENSE)
-[![Version](https://img.shields.io/badge/version-2.6.0-blue?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
+[![Version](https://img.shields.io/badge/version-2.6.1-blue?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
 
 > A CLI that installs apps, drivers, and terminal utilities on Debian/Ubuntu and Arch Linux from a single menu.
 
