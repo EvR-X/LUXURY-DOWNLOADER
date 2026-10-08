@@ -1,7 +1,7 @@
 # Luxury Downloader
 
 [![License](https://img.shields.io/github/license/EvR-X/LUXURY-DOWNLOADER?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/blob/main/LICENSE)
-[![Version](https://img.shields.io/badge/version-2.6.1-blue?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
+[![Version](https://img.shields.io/badge/version-2.6.2-blue?style=flat-square)](https://github.com/EvR-X/LUXURY-DOWNLOADER/releases)
 
 > A CLI that installs apps, drivers, and terminal utilities on Debian/Ubuntu and Arch Linux from a single menu.
 
@@ -44,7 +44,7 @@ App and utility menus use the same internal registries as the installer, keeping
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury-downloader.sh | bash
+curl -fsSL https://raw.githubusercontent.com/EvR-X/LUXURY-DOWNLOADER/main/luxury.sh | bash
 ```
 
 ## Usage
