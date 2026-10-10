@@ -26,7 +26,7 @@
 
 set -u
 
-VERSION="2.6.2"
+VERSION="2.6.3"
 LUXURY_TITLE="Luxury Downloader"
 INSTALL_PATH="/usr/local/bin/luxury"
 REPO="EvR-X/LUXURY-DOWNLOADER"
@@ -99,7 +99,10 @@ fi
 
 print_ok()   { printf '%b✓%b %s\n' "$GREEN" "$RESET" "$1"; }
 print_warn() { printf '%b!%b %s\n' "$YELLOW" "$RESET" "$1"; }
-print_err()  { printf '%b✗%b %s\n' "$RED" "$RESET" "$1"; }
+# print_err also remembers its message, so a batch install can say why an
+# item failed.
+LAST_ERROR=""
+print_err()  { LAST_ERROR="$1"; printf '%b✗%b %s\n' "$RED" "$RESET" "$1"; }
 print_info() { printf '%b→%b %s\n' "$CYAN" "$RESET" "$1"; }
 
 press_enter() {
@@ -320,25 +323,27 @@ detect_distro() {
 # Install snapshot (menu marks only)
 #
 # Drawing a page used to ask the system about every row on its own
-# (dpkg-query + grep, pacman, snap list... dozens of processes per
-# redraw). take_install_snapshot reads the installed packages (and,
-# when asked, the installed snaps) ONCE, and while it is active
-# is_installed / snap_is_installed answer from that copy.
+# (dpkg-query + grep, pacman, snap list, flatpak info... dozens of
+# processes per redraw, some of them slow to start). take_install_snapshot
+# reads the installed packages and Luxury's own install records ONCE, and
+# while it is active is_installed, snap_is_installed and
+# flatpak_is_installed answer from that copy or straight from the
+# filesystem: no external program is started per row.
 #
 # Only the [✓]/[X] marks of the pages use it, and drop_install_snapshot
 # runs right after they are drawn, so installs, uninstalls and every
 # other decision still ask the system directly and never see stale data.
 # ------------------------------------------------------------
 SNAPSHOT_ACTIVE=false
-SNAPSHOT_SNAPS_READY=false
 declare -A SNAPSHOT_PKGS=()
-declare -A SNAPSHOT_SNAPS=()
 declare -A SNAPSHOT_RECORDS=()
 
-# take_install_snapshot [snaps] -> "snaps" also reads the installed snaps
-# (only the pages that list apps need them).
+# Where snapd mounts installed snaps: /snap on Debian/Ubuntu and their
+# derivatives (a link to the second path), the second path itself on
+# layouts without that link.
+SNAP_ROOTS=(/snap /var/lib/snapd/snap)
+
 take_install_snapshot() {
-    local with_snaps="${1:-}"
     local name
     local -a names=()
 
@@ -379,24 +384,11 @@ take_install_snapshot() {
             fi
         done < "$INSTALL_RECORD_FILE"
     fi
-
-    if [[ "$with_snaps" == "snaps" ]]; then
-        names=()
-        if command -v snap >/dev/null 2>&1; then
-            mapfile -t names < <(snap list 2>/dev/null | awk 'NR > 1 { print $1 }')
-        fi
-        for name in "${names[@]}"; do
-            [[ -n "$name" ]] && SNAPSHOT_SNAPS["$name"]=1
-        done
-        SNAPSHOT_SNAPS_READY=true
-    fi
 }
 
 drop_install_snapshot() {
     SNAPSHOT_ACTIVE=false
-    SNAPSHOT_SNAPS_READY=false
     SNAPSHOT_PKGS=()
-    SNAPSHOT_SNAPS=()
     SNAPSHOT_RECORDS=()
 }
 
@@ -416,17 +408,41 @@ is_installed() {
     fi
 }
 
-# snap_is_installed <name> -> is that snap installed? Answers from the
-# snapshot while one that includes snaps is active; otherwise asks snap.
+# snap_is_installed <name> -> is that snap installed?
+# While a snapshot is active it looks for the snap's mount point: `snap
+# list` can take seconds (or block) while snapd is starting or seeding.
 snap_is_installed() {
     local name="$1"
+    local root
 
-    if [[ "$SNAPSHOT_SNAPS_READY" == true ]]; then
-        [[ -n "$name" && -n "${SNAPSHOT_SNAPS[$name]:-}" ]]
-        return
+    if [[ "$SNAPSHOT_ACTIVE" == true ]]; then
+        [[ -n "$name" ]] || return 1
+        for root in "${SNAP_ROOTS[@]}"; do
+            [[ -e "${root}/${name}/current" ]] && return 0
+        done
+        return 1
     fi
 
     command -v snap >/dev/null 2>&1 && snap list "$name" >/dev/null 2>&1
+}
+
+# flatpak_is_installed <app id> -> is that Flatpak app installed?
+# While a snapshot is active it looks for the app's deployment in the
+# system and user installations: `flatpak info` is slow to start, and on a
+# minimal system or a VM it can wait a long time for D-Bus.
+flatpak_is_installed() {
+    local id="$1"
+    local system_dir="${FLATPAK_SYSTEM_DIR:-/var/lib/flatpak}"
+    local user_dir="${FLATPAK_USER_DIR:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/flatpak}"
+
+    if [[ "$SNAPSHOT_ACTIVE" == true ]]; then
+        [[ -n "$id" ]] || return 1
+        compgen -G "${system_dir}/app/${id}/*/*/active" >/dev/null && return 0
+        compgen -G "${user_dir}/app/${id}/*/*/active" >/dev/null
+        return
+    fi
+
+    command -v flatpak >/dev/null 2>&1 && flatpak info "$id" >/dev/null 2>&1
 }
 
 apt_has_package() {
@@ -446,6 +462,8 @@ apt_run() {
 }
 
 apt_update() {
+    check_sudo || return 1
+
     print_info "Refreshing APT package indexes..."
 
     if apt_run update; then
@@ -758,6 +776,7 @@ cleanup_on_exit() {
     rollback_compiled_in_progress
     remove_build_only_deps
     cleanup_temp_paths
+    report_interrupted_batch
 }
 
 # ============================================================
@@ -1624,12 +1643,17 @@ record_install() {
         fi
     fi
 
+    check_sudo || return 1
+
     if ! $SUDO mkdir -p "$(dirname "$INSTALL_RECORD_FILE")" 2>/dev/null; then
         print_warn "Could not save the install record for ${slug}; Uninstall [Apps/Utilities] will not be able to remove it."
         return 1
     fi
 
-    forget_install "$category" "$slug"
+    if ! forget_install "$category" "$slug"; then
+        print_warn "Could not replace the previous install record for ${slug}; the new record was not written."
+        return 1
+    fi
 
     if printf '%s|%s|%s|%s\n' "$category" "$slug" "$method" "$target" \
         | $SUDO tee -a "$INSTALL_RECORD_FILE" >/dev/null 2>&1; then
@@ -1676,7 +1700,16 @@ forget_install() {
     local tmp line c s
 
     [[ -f "$INSTALL_RECORD_FILE" ]] || return 0
-    tmp="$(mktemp)" || return 0
+
+    if ! check_sudo; then
+        print_warn "Could not obtain administrator privileges; the install record for ${slug} was not changed."
+        return 1
+    fi
+
+    tmp="$(mktemp)" || {
+        print_warn "Could not create a temporary file to update the install record for ${slug}."
+        return 1
+    }
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -n "$line" ]] || continue
@@ -1689,11 +1722,21 @@ forget_install() {
         fi
 
         [[ "$c" == "$category" && "$s" == "$slug" ]] && continue
-        printf '%s\n' "$line" >> "$tmp"
+        if ! printf '%s\n' "$line" >> "$tmp"; then
+            rm -f "$tmp"
+            print_warn "Could not prepare the updated install record for ${slug}."
+            return 1
+        fi
     done < "$INSTALL_RECORD_FILE"
 
-    $SUDO cp "$tmp" "$INSTALL_RECORD_FILE" 2>/dev/null
+    if ! $SUDO cp "$tmp" "$INSTALL_RECORD_FILE" 2>/dev/null; then
+        rm -f "$tmp"
+        print_warn "Could not update the install record for ${slug}."
+        return 1
+    fi
+
     rm -f "$tmp"
+    return 0
 }
 
 # legacy_record_to_entry <category> <slug> -> prints the v2 line for an
@@ -1791,15 +1834,16 @@ migrate_install_records() {
 # was_already_present <category> <slug> -> is this software on the
 # system right now? Used for the ✓/X marks in the menus and to word one
 # message in uninstall_entry; it is never used to decide what to
-# uninstall. Reuses resolve_default_target/is_target_present (defined
-# later, in the SAFE UNINSTALL SYSTEM section -- fine in bash, since
-# nothing here runs until main() is reached at the bottom of the script).
+# uninstall. Reuses resolve_target_into/is_target_present (defined later,
+# in the SAFE UNINSTALL SYSTEM section -- fine in bash, since nothing here
+# runs until main() is reached at the bottom of the script).
 was_already_present() {
     local category="$1"
     local slug="$2"
     local method_target method target record
 
-    method_target="$(resolve_default_target "$category" "$slug")"
+    resolve_target_into "$category" "$slug"
+    method_target="$RESOLVED_TARGET"
     method="${method_target%%:*}"
     target="${method_target#*:}"
 
@@ -2053,7 +2097,11 @@ install_aur_helper() {
     }
 
     local tmpdir
-    tmpdir="$(mktemp -d)"
+    tmpdir="$(mktemp -d)" || {
+        print_err "Could not create a temporary directory."
+        return 1
+    }
+    register_cleanup "$tmpdir"
 
     case "$helper" in
         yay)
@@ -2137,6 +2185,7 @@ show_aur_helpers_page() {
                 ;;
             *)
                 print_warn "Invalid option."
+                press_enter
                 ;;
         esac
     done
@@ -2575,6 +2624,8 @@ ubuntu_has_ubuntu_drivers() {
 # Ubuntu and Ubuntu-based distros: ubuntu-drivers picks the driver that
 # suits the GPU (and the Ubuntu release) by itself.
 install_nvidia_ubuntu() {
+    check_sudo || return 1
+
     if ! ubuntu_has_ubuntu_drivers; then
         if ! install_apt_package "ubuntu-drivers-common" "Ubuntu Drivers"; then
             print_err "Automatic NVIDIA driver support is not available on this distribution."
@@ -2767,7 +2818,7 @@ show_drivers_page() {
                 7) install_intel_gpu_arch || true; press_enter ;;
                 8) install_intel_cpu_arch || true; press_enter ;;
                 9) install_firmware_arch || true; press_enter ;;
-                *) print_warn "Invalid option." ;;
+                *) print_warn "Invalid option."; press_enter ;;
             esac
         else
             case "$choice" in
@@ -2777,7 +2828,7 @@ show_drivers_page() {
                 4) install_intel_gpu_debian || true; press_enter ;;
                 5) install_intel_cpu_debian || true; press_enter ;;
                 6) install_firmware_debian || true; press_enter ;;
-                *) print_warn "Invalid option." ;;
+                *) print_warn "Invalid option."; press_enter ;;
             esac
         fi
     done
@@ -3542,48 +3593,57 @@ install_utility() {
 # the exact method and target that were recorded when it installed
 # them. Never touches software the user installed some other way.
 
-# resolve_default_target <category> <slug> -> prints "method:target" for
-# where this software normally lives on the CURRENT distro family. It is
-# only used to draw the menus' ✓ marks and by migrate_install_records();
-# it is NEVER used to decide what to uninstall, because the state of the
-# system can change between an install and an uninstall. method is one
-# of: apt, pacman, flatpak, snap, command (any program of that name on
-# PATH), unknown.
-resolve_default_target() {
+# resolve_target_into <category> <slug> -> sets RESOLVED_TARGET to
+# "method:target" for where this software normally lives on the CURRENT
+# distro family. It does not print, so the menus can call it without
+# starting a subshell per row (resolve_default_target below prints it for
+# callers that capture the result). It is only used to draw the menus' ✓
+# marks and by migrate_install_records(); it is NEVER used to decide what to
+# uninstall, because the state of the system can change between an install
+# and an uninstall. method is one of: apt, pacman, flatpak, snap, command
+# (any program of that name on PATH), unknown.
+RESOLVED_TARGET=""
+
+resolve_target_into() {
     local category="$1"
     local slug="$2"
+
+    if [[ -z "$slug" ]]; then
+        RESOLVED_TARGET='unknown:'
+        return
+    fi
 
     if [[ "$category" == "app" ]]; then
         case "$slug" in
             brave)
                 if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'apt:brave-origin'
+                    RESOLVED_TARGET='apt:brave-origin'
                 else
-                    printf 'pacman:brave-origin-bin'
+                    RESOLVED_TARGET='pacman:brave-origin-bin'
                 fi
                 return
                 ;;
             librewolf)
                 if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'apt:librewolf'
+                    RESOLVED_TARGET='apt:librewolf'
                 else
-                    printf 'pacman:librewolf'
+                    RESOLVED_TARGET='pacman:librewolf'
                 fi
                 return
                 ;;
             localsend)
                 if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'flatpak:org.localsend.localsend_app'
+                    RESOLVED_TARGET='flatpak:org.localsend.localsend_app'
                 else
-                    printf 'pacman:localsend-bin'
+                    RESOLVED_TARGET='pacman:localsend-bin'
                 fi
                 return
                 ;;
             retroarch)
                 if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'apt:retroarch'
+                    RESOLVED_TARGET='apt:retroarch'
                 else
-                    printf 'pacman:retroarch'
+                    RESOLVED_TARGET='pacman:retroarch'
                 fi
                 return
                 ;;
@@ -3593,9 +3653,9 @@ resolve_default_target() {
                 # Uninstalling it removes only the bazaar package itself,
                 # never the shared Flatpak/Flathub runtime it depends on.
                 if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    printf 'apt:bazaar'
+                    RESOLVED_TARGET='apt:bazaar'
                 else
-                    printf 'unknown:'
+                    RESOLVED_TARGET='unknown:'
                 fi
                 return
                 ;;
@@ -3603,9 +3663,9 @@ resolve_default_target() {
                 # See the THUNDERBIRD section: on Ubuntu the APT package
                 # is only a shim for the Snap.
                 if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                    thunderbird_target_debian
+                    RESOLVED_TARGET="$(thunderbird_target_debian)"
                 else
-                    printf 'pacman:thunderbird'
+                    RESOLVED_TARGET='pacman:thunderbird'
                 fi
                 return
                 ;;
@@ -3613,10 +3673,10 @@ resolve_default_target() {
 
         if [[ "$DISTRO_FAMILY" == "debian" ]]; then
             local pkg="${APP_PKG_DEBIAN[$slug]:-}"
-            [[ -n "$pkg" ]] && printf 'apt:%s' "$pkg" || printf 'unknown:'
+            [[ -n "$pkg" ]] && RESOLVED_TARGET="apt:${pkg}" || RESOLVED_TARGET='unknown:'
         else
             local pkg="${APP_PKG_ARCH[$slug]:-}"
-            [[ -n "$pkg" ]] && printf 'pacman:%s' "$pkg" || printf 'unknown:'
+            [[ -n "$pkg" ]] && RESOLVED_TARGET="pacman:${pkg}" || RESOLVED_TARGET='unknown:'
         fi
         return
     fi
@@ -3626,38 +3686,38 @@ resolve_default_target() {
         lavat)
             # Always built from source with "make install" on every
             # distro family -- see install_lavat.
-            printf 'command:lavat'
+            RESOLVED_TARGET='command:lavat'
             return
             ;;
         peaclock)
             if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                printf 'command:peaclock'
+                RESOLVED_TARGET='command:peaclock'
             else
-                printf 'pacman:peaclock'
+                RESOLVED_TARGET='pacman:peaclock'
             fi
             return
             ;;
         pipes)
             if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                printf 'apt:pipes-sh'
+                RESOLVED_TARGET='apt:pipes-sh'
             else
-                printf 'pacman:pipes.sh'
+                RESOLVED_TARGET='pacman:pipes.sh'
             fi
             return
             ;;
         sptlrx)
             if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                printf 'apt:sptlrx'
+                RESOLVED_TARGET='apt:sptlrx'
             else
-                printf 'pacman:sptlrx'
+                RESOLVED_TARGET='pacman:sptlrx'
             fi
             return
             ;;
         tty-clock)
             if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-                printf 'apt:tty-clock'
+                RESOLVED_TARGET='apt:tty-clock'
             else
-                printf 'pacman:tty-clock'
+                RESOLVED_TARGET='pacman:tty-clock'
             fi
             return
             ;;
@@ -3665,11 +3725,18 @@ resolve_default_target() {
 
     if [[ "$DISTRO_FAMILY" == "debian" ]]; then
         local pkg="${UTIL_APT[$slug]:-}"
-        [[ -n "$pkg" ]] && printf 'apt:%s' "$pkg" || printf 'unknown:'
+        [[ -n "$pkg" ]] && RESOLVED_TARGET="apt:${pkg}" || RESOLVED_TARGET='unknown:'
     else
         local pkg="${UTIL_PACMAN[$slug]:-}"
-        [[ -n "$pkg" ]] && printf 'pacman:%s' "$pkg" || printf 'unknown:'
+        [[ -n "$pkg" ]] && RESOLVED_TARGET="pacman:${pkg}" || RESOLVED_TARGET='unknown:'
     fi
+}
+
+# resolve_default_target <category> <slug> -> prints what resolve_target_into
+# sets.
+resolve_default_target() {
+    resolve_target_into "$1" "$2"
+    printf '%s' "$RESOLVED_TARGET"
 }
 
 # present_targets_from_list <comma-separated packages> -> prints, one per
@@ -3692,6 +3759,13 @@ present_targets_from_list() {
 any_of_list_installed() {
     local pkg
     local -a pkgs
+
+    # The usual target is a single package: there is no list to split.
+    if [[ "$1" != *,* ]]; then
+        [[ -n "$1" ]] && is_installed "$1"
+        return
+    fi
+
     IFS=',' read -r -a pkgs <<< "$1"
     for pkg in "${pkgs[@]}"; do
         [[ -n "$pkg" ]] || continue
@@ -3708,7 +3782,7 @@ is_target_present() {
 
     case "$method" in
         apt|pacman) any_of_list_installed "$target" ;;
-        flatpak)    command -v flatpak >/dev/null 2>&1 && flatpak info "$target" >/dev/null 2>&1 ;;
+        flatpak)    flatpak_is_installed "$target" ;;
         snap)       snap_is_installed "$target" ;;
         path)       [[ -e "$target" || -L "$target" ]] ;;
         compiled)   [[ -s "${COMPILED_RECORD_DIR}/${target}.list" ]] ;;
@@ -3842,7 +3916,7 @@ uninstall_entry() {
 
     if ! is_target_present "$method" "$target"; then
         print_warn "${name} was already removed."
-        forget_install "$category" "$slug"
+        forget_install "$category" "$slug" || return 1
         return 0
     fi
 
@@ -3850,7 +3924,8 @@ uninstall_entry() {
 
     if perform_uninstall "$method" "$target"; then
         print_ok "${name} was uninstalled."
-        forget_install "$category" "$slug"
+        forget_install "$category" "$slug" || return 1
+        return 0
     else
         print_err "Could not uninstall ${name}."
         return 1
@@ -3884,20 +3959,17 @@ show_utilities_page() {
         box_bottom "TERMINAL UTILITIES"
         echo
 
-        local choice
-        read -r -p "Select: " choice || return 0
+        local input
+        read -r -p "Select one or more (e.g: 1,3,5): " input || return 0
 
-        if [[ "${choice,,}" == "b" ]]; then
+        if [[ "${input,,}" == "b" ]]; then
             return 0
         fi
 
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#UTIL_ORDER[@]} )); then
-            local selected="${UTIL_ORDER[$((choice - 1))]}"
-            install_utility "$selected" || true
-            press_enter
-        else
-            print_warn "Invalid option."
-        fi
+        install_selection "util" "$input"
+
+        echo
+        read -r -p "Press Enter to continue..." _ || true
     done
 }
 
@@ -4028,6 +4100,193 @@ update_system() {
 }
 
 # ============================================================
+#                  INSTALLING SEVERAL AT ONCE
+# ============================================================
+
+# What the current (or last) batch has done, for its summary.
+BATCH_OK=()           # names installed during the batch
+BATCH_PRESENT=()      # names that were already installed
+BATCH_FAILED=()       # "Name|reason", one per entry that failed
+BATCH_IN_PROGRESS=false
+
+# slug_by_number <app|util> <number> -> prints the slug of that menu entry.
+# The number is read as base 10, so a typed "08" is eight, not an octal error.
+slug_by_number() {
+    local category="$1"
+    local n="$2"
+    local idx
+
+    [[ "$n" =~ ^[0-9]{1,4}$ ]] || return 1
+    idx=$((10#$n - 1))
+    (( idx >= 0 )) || return 1
+
+    if [[ "$category" == "app" ]]; then
+        (( idx < ${#APP_ORDER[@]} )) || return 1
+        printf '%s' "${APP_ORDER[$idx]}"
+    else
+        (( idx < ${#UTIL_ORDER[@]} )) || return 1
+        printf '%s' "${UTIL_ORDER[$idx]}"
+    fi
+}
+
+# join_by <separator> <item...> -> prints the items joined by the separator.
+join_by() {
+    local separator="$1"
+    local result=""
+    local item
+    shift
+
+    for item in "$@"; do
+        result+="${result:+$separator}${item}"
+    done
+
+    printf '%s' "$result"
+}
+
+# print_batch_summary -> what the batch installed, what was already there
+# and what failed (with the reason when there is one).
+print_batch_summary() {
+    local entry name reason
+
+    printf '\n%bSummary%b\n' "$BOLD$BLUE" "$RESET"
+
+    if (( ${#BATCH_OK[@]} == 0 && ${#BATCH_PRESENT[@]} == 0 && ${#BATCH_FAILED[@]} == 0 )); then
+        print_info "Nothing was installed."
+        return 0
+    fi
+
+    if (( ${#BATCH_OK[@]} > 0 )); then
+        print_ok "Installed successfully: $(join_by ', ' "${BATCH_OK[@]}")"
+    fi
+
+    if (( ${#BATCH_PRESENT[@]} > 0 )); then
+        print_info "Already installed: $(join_by ', ' "${BATCH_PRESENT[@]}")"
+    fi
+
+    for entry in "${BATCH_FAILED[@]}"; do
+        name="${entry%%|*}"
+        reason="${entry#*|}"
+
+        if [[ -n "$reason" ]]; then
+            print_err "Failed: ${name} (${reason})"
+        else
+            print_err "Failed: ${name}"
+        fi
+    done
+
+    return 0
+}
+
+# Called on the way out of the script: if Luxury was stopped (Ctrl-C, closed
+# terminal) in the middle of a batch, say what had been done up to then.
+report_interrupted_batch() {
+    [[ "$BATCH_IN_PROGRESS" == true ]] || return 0
+    BATCH_IN_PROGRESS=false
+
+    printf '\n'
+    print_warn "Interrupted before the batch finished. Up to that point:"
+    print_batch_summary
+    return 0
+}
+
+# install_selection <app|util> <input> -> installs every entry typed at a
+# menu prompt ("1,3,5"; commas, semicolons and spaces all work). One that
+# fails never stops the rest, and when more than one entry was installed a
+# summary says what was installed, what was already there and what failed.
+install_selection() {
+    local category="$1"
+    local input="$2"
+    local -a items=() slugs=() invalid=()
+    local -A seen=() present_before=()
+    local item slug name total index status
+
+    input="${input//[;[:space:]]/,}"
+    IFS=',' read -r -a items <<< "$input"
+
+    for item in "${items[@]}"; do
+        item="${item//[[:space:]]/}"
+        [[ -n "$item" ]] || continue
+
+        if ! slug="$(slug_by_number "$category" "$item")"; then
+            invalid+=("$item")
+            continue
+        fi
+
+        # The same entry typed twice is installed once.
+        [[ -z "${seen[$slug]:-}" ]] || continue
+        seen[$slug]=1
+        slugs+=("$slug")
+    done
+
+    for item in "${invalid[@]}"; do
+        print_err "Invalid option: $item"
+    done
+
+    total=${#slugs[@]}
+
+    if (( total == 0 )); then
+        (( ${#invalid[@]} > 0 )) || print_warn "No option was entered."
+        return 0
+    fi
+
+    # What is on the system already, read once, to tell "installed now"
+    # from "was already installed" in the summary.
+    take_install_snapshot
+    for slug in "${slugs[@]}"; do
+        if was_already_present "$category" "$slug"; then
+            present_before[$slug]=1
+        fi
+    done
+    drop_install_snapshot
+
+    BATCH_OK=()
+    BATCH_PRESENT=()
+    BATCH_FAILED=()
+    BATCH_IN_PROGRESS=true
+    index=0
+
+    for slug in "${slugs[@]}"; do
+        index=$((index + 1))
+
+        if [[ "$category" == "app" ]]; then
+            name="${APP_NAME[$slug]:-$slug}"
+        else
+            name="${UTIL_NAME[$slug]:-$slug}"
+        fi
+
+        if (( total > 1 )); then
+            printf '\n%b[%d/%d] %s%b\n' "$BOLD$BLUE" "$index" "$total" "$name" "$RESET"
+        fi
+
+        LAST_ERROR=""
+        reset_install_result
+        status=0
+
+        if [[ "$category" == "app" ]]; then
+            install_app_by_slug "$slug" || status=$?
+        else
+            install_utility "$slug" || status=$?
+        fi
+
+        if (( status != 0 )); then
+            BATCH_FAILED+=("${name}|${LAST_ERROR}")
+        elif [[ -n "$INSTALL_RESULT_METHOD" || -z "${present_before[$slug]:-}" ]]; then
+            BATCH_OK+=("$name")
+        else
+            BATCH_PRESENT+=("$name")
+        fi
+    done
+
+    BATCH_IN_PROGRESS=false
+
+    if (( total > 1 )); then
+        print_batch_summary
+    fi
+
+    return 0
+}
+
+# ============================================================
 #                       MENUS / PAGES
 # ============================================================
 
@@ -4040,7 +4299,7 @@ show_apps_page() {
 
         local i=1
         local slug mark
-        take_install_snapshot snaps
+        take_install_snapshot
         for slug in "${APP_ORDER[@]}"; do
             if was_already_present "app" "$slug"; then
                 mark="${GREEN}✓${RESET}"
@@ -4059,38 +4318,16 @@ show_apps_page() {
         echo
 
         local input
-        read -r -p "Select one or more (e.g: 1,3,5): " input || return
+        read -r -p "Select one or more (e.g: 1,3,5): " input || return 0
 
         if [[ "${input,,}" == "b" ]]; then
-            return
+            return 0
         fi
 
-        input="${input//;/,}"
-        local -a items
-        IFS=',' read -r -a items <<< "$input"
-
-        local item any=false
-        for item in "${items[@]}"; do
-            item="${item//[[:space:]]/}"
-            [[ -z "$item" ]] && continue
-            any=true
-
-            if [[ "${item,,}" == "b" ]]; then
-                return
-            elif slug="$(app_slug_by_number "$item" 2>/dev/null)"; then
-                install_app_by_slug "$slug" || true
-            else
-                print_err "Invalid option: $item"
-            fi
-            echo
-        done
-
-        if [[ "$any" == false ]]; then
-            print_warn "No option was entered."
-        fi
+        install_selection "app" "$input"
 
         echo
-        read -r -p "Press Enter to continue..." _
+        read -r -p "Press Enter to continue..." _ || true
     done
 }
 
@@ -4118,12 +4355,10 @@ print_uninstall_row() {
 show_uninstall_page() {
     local n_apps=${#APP_ORDER[@]}
     local n_utils=${#UTIL_ORDER[@]}
-    # Bazaar has its own dedicated install button (not part of APP_ORDER,
-    # see install_bazaar), but it can still be uninstalled here. It gets
-    # the number right after Terminal Utilities, so the existing "app"
-    # (1..n_apps) and "util" (n_apps+1..n_apps+n_utils) ranges below
-    # stay untouched.
-    local bazaar_index=$((n_apps + n_utils + 1))
+    # Bazaar has its own install button (it is not part of APP_ORDER, see
+    # install_bazaar) but it can still be uninstalled here: it is listed
+    # right after the apps, and the utilities are numbered after it.
+    local bazaar_index=$((n_apps + 1))
 
     while true; do
         clear 2>/dev/null || true
@@ -4135,7 +4370,7 @@ show_uninstall_page() {
         local slug
 
         # One snapshot for the whole page instead of one query per row.
-        take_install_snapshot snaps
+        take_install_snapshot
 
         printf '  %bAPPS%b\n' "$BOLD$BLUE" "$RESET"
         for slug in "${APP_ORDER[@]}"; do
@@ -4146,7 +4381,7 @@ show_uninstall_page() {
 
         echo
         printf '  %bTERMINAL UTILITIES%b\n' "$BOLD$BLUE" "$RESET"
-        i=$((n_apps + 1))
+        i=$((bazaar_index + 1))
         for slug in "${UTIL_ORDER[@]}"; do
             print_uninstall_row "$i" "util" "$slug" "${UTIL_NAME[$slug]:-$slug}"
             ((i++))
@@ -4161,32 +4396,34 @@ show_uninstall_page() {
         echo
 
         local input
-        read -r -p "Select one or more to uninstall: " input || return
+        read -r -p "Select one or more to uninstall: " input || return 0
 
         if [[ "${input,,}" == "b" ]]; then
-            return
+            return 0
         fi
 
-        input="${input//;/,}"
+        input="${input//[;[:space:]]/,}"
         local -a items
         IFS=',' read -r -a items <<< "$input"
 
-        local item any=false
+        local item number any=false
         for item in "${items[@]}"; do
             item="${item//[[:space:]]/}"
             [[ -z "$item" ]] && continue
             any=true
 
-            if [[ "${item,,}" == "b" ]]; then
-                return
+            # Read as base 10 ("08" is eight); anything else is invalid.
+            number=0
+            if [[ "$item" =~ ^[0-9]{1,4}$ ]]; then
+                number=$((10#$item))
             fi
 
-            if [[ "$item" =~ ^[0-9]+$ ]] && (( item >= 1 && item <= n_apps )); then
-                uninstall_entry "app" "${APP_ORDER[$((item - 1))]}"
-            elif [[ "$item" =~ ^[0-9]+$ ]] && (( item > n_apps && item <= n_apps + n_utils )); then
-                uninstall_entry "util" "${UTIL_ORDER[$((item - 1 - n_apps))]}"
-            elif [[ "$item" =~ ^[0-9]+$ ]] && (( item == bazaar_index )); then
+            if (( number >= 1 && number <= n_apps )); then
+                uninstall_entry "app" "${APP_ORDER[$((number - 1))]}"
+            elif (( number == bazaar_index )); then
                 uninstall_entry "app" "bazaar"
+            elif (( number > bazaar_index && number <= bazaar_index + n_utils )); then
+                uninstall_entry "util" "${UTIL_ORDER[$((number - bazaar_index - 1))]}"
             else
                 print_err "Invalid option: $item"
             fi
@@ -4198,7 +4435,7 @@ show_uninstall_page() {
         fi
 
         echo
-        read -r -p "Press Enter to continue..." _
+        read -r -p "Press Enter to continue..." _ || true
     done
 }
 
@@ -4226,7 +4463,7 @@ process_selection() {
     local item
     local -a items
 
-    input="${input//;/,}"
+    input="${input//[;[:space:]]/,}"
     IFS=',' read -r -a items <<< "$input"
 
     for item in "${items[@]}"; do
@@ -4273,20 +4510,6 @@ process_selection() {
 
         echo
     done
-}
-
-app_slug_by_number() {
-    local n="$1"
-    local idx
-
-    [[ "$n" =~ ^[0-9]+$ ]] || return 1
-    idx=$((n - 1))
-
-    if (( idx < 0 || idx >= ${#APP_ORDER[@]} )); then
-        return 1
-    fi
-
-    printf '%s' "${APP_ORDER[$idx]}"
 }
 
 # ============================================================
